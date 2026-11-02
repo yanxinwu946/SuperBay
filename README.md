@@ -73,7 +73,7 @@ python tools/benchmark.py --help
 | `tests/`、`tools/` | 自动测试与性能工具 |
 | `docs/` | 使用说明与开发资料 |
 
-[使用与配置](docs/reference.md) · [工具工作台](docs/toolbox-features.md) · [开发与性能](docs/modernization.md)
+[使用说明与目录命名](docs/user-guide.md) · [使用与配置](docs/reference.md) · [工具工作台](docs/toolbox-features.md) · [开发与性能](docs/modernization.md)
 
 ## 许可证
 
