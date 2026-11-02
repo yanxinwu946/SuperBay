@@ -1,0 +1,90 @@
+
+/* Shared control system. Colors resolve to the active existing theme palette. */
+QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit, QTimeEdit, QDateTimeEdit {
+    background: @surface; color: @text; border: 1px solid @border;
+    border-radius: 8px; padding: 7px 32px 7px 12px; min-height: 20px;
+    selection-background-color: @selection;
+}
+QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover, QDateEdit:hover, QTimeEdit:hover, QDateTimeEdit:hover { border-color: @muted; }
+QComboBox:focus, QComboBox:on, QSpinBox:focus, QDoubleSpinBox:focus { border-color: #3cb56f; }
+QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 30px; border: none; }
+QComboBox::down-arrow { image: url(@assets/chevron-@theme.svg); width: 16px; height: 16px; }
+QComboBox QAbstractItemView {
+    background: @surface; color: @text; border: 1px solid @border;
+    border-radius: 8px; padding: 6px; outline: none;
+    selection-background-color: @selection; selection-color: @text;
+}
+QComboBox QAbstractItemView::item { min-height: 30px; padding: 4px 10px; border-radius: 5px; }
+QComboBox QAbstractItemView::item:selected { background: @selection; color: @text; }
+QLineEdit { background: @surface; border: 1px solid @border; border-radius: 8px; padding: 8px 12px; min-height: 18px; }
+QLineEdit:hover { border-color: @muted; }
+QLineEdit:focus { border-color: #3cb56f; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled { background: @base; color: @muted; border-color: @border; }
+QCheckBox, QRadioButton { spacing: 9px; padding: 4px 0; }
+QCheckBox::indicator, QRadioButton::indicator { width: 18px; height: 18px; border: 1px solid @muted; background: @surface; }
+QCheckBox::indicator { border-radius: 5px; }
+QRadioButton::indicator { border-radius: 10px; }
+QCheckBox::indicator:hover, QRadioButton::indicator:hover { border-color: #3cb56f; background: @selection; }
+QCheckBox::indicator:checked { background: #3cb56f; border-color: #3cb56f; image: url(@assets/check.svg); }
+QCheckBox::indicator:indeterminate { background: @selection; border: 3px solid #3cb56f; }
+QRadioButton::indicator:checked { background: @surface; border: 6px solid #3cb56f; width: 8px; height: 8px; }
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled { background: @base; border-color: @border; }
+QSpinBox::up-button, QDoubleSpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right; width: 26px; border: none; }
+QSpinBox::down-button, QDoubleSpinBox::down-button { subcontrol-origin: border; subcontrol-position: bottom right; width: 26px; border: none; }
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow { image: url(@assets/up-@theme.svg); width: 12px; height: 12px; }
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow { image: url(@assets/chevron-@theme.svg); width: 12px; height: 12px; }
+QDialog QPushButton, QMessageBox QPushButton { padding: 8px 16px; border: 1px solid @border; border-radius: 8px; background: @surface; color: @text; min-height: 18px; }
+QDialog QPushButton:hover, QMessageBox QPushButton:hover { border-color: #3cb56f; background: @selection; }
+QDialog QPushButton:default { background: #3cb56f; color: white; border-color: #3cb56f; }
+QDialog QPushButton:disabled { color: @muted; background: @base; }
+QTabWidget::pane { border: 1px solid @border; border-radius: 8px; background: @surface; }
+QTabBar::tab { background: @base; color: @muted; padding: 9px 16px; border: none; border-bottom: 2px solid transparent; }
+QTabBar::tab:selected { color: @text; background: @surface; border-bottom-color: #3cb56f; }
+QTabBar::tab:hover { color: @text; }
+QSlider::groove:horizontal { height: 4px; background: @border; border-radius: 2px; }
+QSlider::sub-page:horizontal { background: #3cb56f; border-radius: 2px; }
+QSlider::handle:horizontal { background: @surface; border: 2px solid #3cb56f; width: 14px; margin: -6px 0; border-radius: 8px; }
+QProgressBar { border: none; background: @border; border-radius: 4px; text-align: center; min-height: 8px; }
+QProgressBar::chunk { background: #3cb56f; border-radius: 4px; }
+
+/* Settings: a dedicated preference workspace with quiet chrome. */
+#SettingsRail { background: @surface; border-right: 1px solid @border; }
+#SettingsBrand { font-size: 18px; font-weight: 700; padding: 0 12px; }
+#SettingsNav { background: transparent; border: none; outline: none; }
+#SettingsNav::item { padding: 12px; margin: 2px 0; border-radius: 8px; color: @muted; }
+#SettingsNav::item:hover { background: @base; color: @text; }
+#SettingsNav::item:selected { background: @selection; color: @text; font-weight: 600; }
+#SettingsScroll, #SettingsPage { background: @base; }
+#SettingsPageTitle { font-size: 28px; font-weight: 700; color: @text; }
+#SettingsPageSubtitle { font-size: 13px; color: @muted; }
+#SettingsSection { font-size: 12px; font-weight: 600; color: @muted; padding-bottom: 6px; }
+#SettingsCard { background: @surface; border: 1px solid @border; border-radius: 12px; }
+#SettingsKey { font-size: 13px; color: @text; }
+#SettingsValue { color: @muted; font-size: 12px; }
+#SettingsHint { color: @muted; font-size: 12px; }
+#SettingsFooter { background: @surface; border-top: 1px solid @border; }
+#SettingsDialog #PrimaryBtn { background: #3cb56f; border: none; color: white; min-width: 72px; padding: 8px 20px; }
+#SettingsDialog #PrimaryBtn:hover { background: #2f9d5d; }
+QLineEdit[invalid="true"] { border-color: #f0524f; }
+#SettingsHint[invalid="true"] { color: #f0524f; }
+
+/* Category titles wrap independently of their trailing item counts. */
+#SideBar #NavButton { padding: 0; }
+#NavName { background: transparent; color: @text; font-size: 13px; font-weight: 500; }
+#NavCount { background: transparent; color: @muted; font-size: 11px; }
+#NavButton:checked #NavName { color: @text; font-weight: 600; }
+
+/* Runtime tables and output panes use the same surfaces as other controls. */
+QPlainTextEdit, QTextEdit { background: @surface; color: @text; border: 1px solid @border; border-radius: 8px; padding: 10px; selection-background-color: @selection; selection-color: @text; }
+#RuntimeTable { background: @surface; alternate-background-color: @base; color: @text; border: 1px solid @border; border-radius: 8px; }
+#RuntimeTable::item { padding: 8px 10px; }
+#RuntimeTable::item:selected { background: @selection; color: @text; }
+#RuntimeTable QHeaderView { background: @base; }
+#RuntimeTable QHeaderView::section { background: @base; color: @text; border: none; border-bottom: 1px solid @border; padding: 9px 10px; }
+#RuntimeTable QTableCornerButton::section { background: @base; border: none; }
+
+/* Shared management lists, including empty and selected states. */
+#ToolHistory, #ToolHealth { background: @surface; color: @text; border: 1px solid @border; border-radius: 8px; outline: none; }
+#ToolHistory::item, #ToolHealth::item { padding: 9px 10px; border: none; }
+#ToolHistory::item:selected, #ToolHealth::item:selected { background: @selection; color: @text; }
+#ToolHistory QHeaderView::section, #ToolHealth QHeaderView::section { background: @base; color: @muted; border: none; border-bottom: 1px solid @border; padding: 10px; font-weight: 500; }

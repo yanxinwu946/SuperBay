@@ -1,0 +1,27 @@
+config/config.yaml
+config/data.db
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+Thumbs.db
+
+config/launches/
+config/before-import-*.zip
+
+# Local runtime and development artifacts
+*.log
+*.log.*
+*.db-wal
+*.db-shm
+.venv/
+.pytest_cache/
+.ruff_cache/
+settings-light.png
+settings-dark.png
+# Generated UI review captures (source icons remain tracked)
+assets/*-preview.png
+assets/*-fixed.png
+assets/workspace-glass-*.png
+assets/shortcut-manager-*.png
+assets/toolbox-manager-*.png

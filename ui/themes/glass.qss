@@ -1,0 +1,94 @@
+/* Material chrome and opaque content. No blur filters or repaint animations. */
+QMainWindow[nativeBackdrop="true"] { background: transparent; }
+#GlassCanvas { background: transparent; }
+#TopBar, #SideBar, #DetailPanel {
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 @glassTop,stop:1 @glassBottom);
+    border: 1px solid @glassEdge; border-top-color: @glassHighlight; border-radius: 18px;
+}
+#TopBar { min-height: 56px; max-height: 56px; }
+#Brand { font-size: 16px; font-weight: 600; }
+#WorkspaceBtn { background: transparent; color: @text; border: none; border-radius: 14px; padding: 7px 12px; }
+#WorkspaceBtn:hover { background: @selection; color: @text; }
+#WorkspaceBtn[active="true"] { background: @surface; color: @text; border: 1px solid @glassEdge; }
+#TopIconBtn { border: none; border-radius: 12px; }
+#TopIconBtn:hover, #TopIconBtn:checked { background: @selection; }
+#SearchBar { background: @surface; color: @text; border: 1px solid @glassEdge; border-radius: 14px; padding: 7px 12px; }
+#SearchBar:focus { border: 1px solid @muted; background: @surface; }
+#SideScroll, #SideContent { background: transparent; }
+#SideBar #NavButton { border: none; border-radius: 12px; background: transparent; padding: 0; }
+#SideBar #NavButton:hover { background: @selection; }
+#SideBar #NavButton:checked { background: @surface; border: 1px solid @glassEdge; }
+#NavName { font-weight: 400; color: @text; }
+#NavButton:checked #NavName { font-weight: 600; }
+#NavCount { color: @text; font-size: 11px; }
+#Content { background: @contentSurface; border: 1px solid @glassEdge; border-radius: 20px; }
+#ContentTitle { font-size: 20px; font-weight: 600; padding: 0; border: none; }
+#ContentSub { padding: 0; color: @muted; font-size: 12px; }
+#Content #GhostBtn { background: @surface; border: 1px solid @glassEdge; border-radius: 12px; padding: 6px 12px; }
+#Content QComboBox { border-radius: 12px; }
+#EntryView { background: transparent; border: none; outline: none; }
+#DetailPanel { border-radius: 18px; }
+#DetailName { font-size: 18px; font-weight: 600; }
+#StatusBar { background: transparent; border: none; }
+#StatusOk { color: @text; font-weight: 400; }
+#StatusText { color: @text; }
+#RuntimeTable { border: 1px solid @glassEdge; border-radius: 16px; background: @surface; }
+#RuntimeTable QHeaderView::section { background: @surface; border: none; border-bottom: 1px solid @glassEdge; padding: 10px 8px; }
+QDialog #GhostBtn { border-radius: 12px; border-color: @glassEdge; color: @text; background: @surface; }
+QDialog #PrimaryBtn { border-radius: 12px; background: @primary; color: @primaryText; border: none; }
+QLineEdit, QComboBox { border-radius: 12px; }
+QMenu { border-radius: 12px; border-color: @glassEdge; }
+
+/* Preferences share the main window's material, edges and control rhythm. */
+#SettingsDialog { background: @base; }
+#SettingsRail {
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 @glassTop,stop:1 @glassBottom);
+    border: none; border-right: 1px solid @glassEdge;
+}
+#SettingsBrand { font-size: 18px; font-weight: 600; color: @text; }
+#SettingsNav::item { border: 1px solid transparent; border-radius: 12px; padding: 11px 12px; }
+#SettingsNav::item:hover { background: @selection; color: @text; }
+#SettingsNav::item:selected { background: @surface; border: 1px solid @glassEdge; color: @text; }
+#SettingsScroll, #SettingsPage { background: @base; border: none; }
+#SettingsPageTitle { font-size: 24px; font-weight: 600; }
+#SettingsCard {
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 @glassTop,stop:1 @glassBottom);
+    border: 1px solid @glassEdge; border-top-color: @glassHighlight; border-radius: 18px;
+}
+#SettingsFooter { background: @contentSurface; border-top: 1px solid @glassEdge; }
+#SettingsDialog QLineEdit, #SettingsDialog QComboBox { border-color: @glassEdge; border-radius: 12px; }
+#SettingsDialog QLineEdit:focus, #SettingsDialog QComboBox:focus { border-color: @primary; }
+#SettingsDialog QLineEdit[invalid="true"] { border-color: #f0524f; }
+#SettingsDialog QPushButton { border-radius: 12px; }
+#SettingsDialog QDialogButtonBox QPushButton { background: @primary; color: @primaryText; border: none; border-radius: 12px; }
+#SettingsDialog QDialogButtonBox QPushButton:hover { background: @primary; border: 1px solid @glassHighlight; }
+
+/* Directory chooser belongs to the material toolbar, not the form controls. */
+#WorkspaceSelector {
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 @glassTop,stop:1 @glassBottom);
+    border: 1px solid @glassEdge; border-top-color: @glassHighlight;
+    border-radius: 12px; padding: 6px 32px 6px 12px;
+    color: @text; font-size: 13px; font-weight: 500;
+}
+#WorkspaceSelector:hover { background: @surface; border-color: @glassHighlight; }
+#WorkspaceSelector:focus, #WorkspaceSelector:on { background: @surface; border-color: @muted; }
+#WorkspaceSelector::drop-down { width: 28px; border: none; background: transparent; }
+#WorkspacePopup {
+    background: @contentSurface; color: @text;
+    border: 1px solid @glassEdge; border-top-color: @glassHighlight;
+    border-radius: 12px; padding: 6px; outline: none;
+}
+
+/* Shortcut management shares the preference cards and toolbar material. */
+#ShortcutManager { background: @base; }
+#ShortcutManager #ContentTitle { font-size: 24px; font-weight: 600; }
+#ShortcutCard {
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 @glassTop,stop:1 @glassBottom);
+    border: 1px solid @glassEdge; border-top-color: @glassHighlight; border-radius: 18px;
+}
+#ShortcutList, #ShortcutList::item { background: transparent; border: none; outline: none; }
+#ShortcutCount { color: @muted; font-size: 12px; }
+#ShortcutEmpty { color: @muted; font-size: 13px; padding: 24px; }
+#ShortcutManager #GhostBtn { min-height: 20px; padding: 7px 14px; font-weight: 500; }
+#ShortcutManager #GhostBtn:disabled { color: @muted; background: transparent; border-color: @glassEdge; }
+#ShortcutManager #PrimaryBtn { min-width: 64px; min-height: 20px; padding: 7px 16px; font-weight: 600; }
