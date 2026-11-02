@@ -41,6 +41,11 @@ class BrowserTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
+        # UI tests may emit launch signals, but must never open OS windows.
+        for target in ("core.launcher._shell_execute_w", "core.launcher.open_in_explorer"):
+            guard = patch(target)
+            guard.start()
+            self.addCleanup(guard.stop)
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
         workspace = root / "workspace"
@@ -108,7 +113,7 @@ class BrowserTests(unittest.TestCase):
 
     def test_compact_layout_and_quick_launch_button(self):
         self.assertFalse(hasattr(self.window, "_status_time"))
-        self.assertLessEqual(GRID_SIZE.height(), 72)
+        self.assertLessEqual(GRID_SIZE.height(), 120)
         browser = self.window._browser
         browser.doItemsLayout()
         launched = []
@@ -226,6 +231,135 @@ class BrowserTests(unittest.TestCase):
             for y in range(option.rect.top(), option.rect.bottom()+1):
                 self.assertEqual(image.pixelColor(x, y), untouched)
         self.assertNotEqual(image.pixelColor(option.rect.center()), untouched)
+
+    def test_change_active_shortcut_path_persists_and_switches(self):
+        from ui.widgets.tool_center import WorkspaceDialog
+        from PySide6.QtWidgets import QFileDialog
+        other = Path(self.temp.name) / "other"
+        target = Path(self.temp.name) / "new-workspace"
+        other.mkdir(); target.mkdir()
+        current = {"name": "测试", "path": str(self.window.workspace)}
+        self.settings.set_presets([{"name": "其他", "path": str(other)}, current])
+        dialog = WorkspaceDialog(self.window)
+        self.assertEqual(dialog.list.currentRow(), 1)
+        with patch.object(QFileDialog, "getExistingDirectory", return_value=str(target)):
+            dialog.change_path()
+        self.assertEqual(self.settings.get_presets()[1], current)
+        dialog.save()
+        self.assertEqual(self.window.workspace, target)
+        saved = Settings(self.settings.path).get_presets()[1]
+        self.assertEqual(saved, {"name": "测试", "path": str(target)})
+        self.assertEqual(self.window._workspace_selector.currentData(), str(target))
+        dialog.deleteLater()
+
+    def test_change_shortcut_path_cancel_and_duplicate(self):
+        from ui.widgets.tool_center import WorkspaceDialog
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        other = Path(self.temp.name) / "other"
+        other.mkdir()
+        current = self.settings.get_presets()[0]
+        self.settings.set_presets([current, {"name": "其他", "path": str(other)}])
+        dialog = WorkspaceDialog(self.window)
+        with patch.object(QFileDialog, "getExistingDirectory", return_value=""):
+            dialog.change_path()
+        self.assertEqual(dialog.shortcuts[0], current)
+        with (patch.object(QFileDialog, "getExistingDirectory", return_value=str(other)),
+              patch.object(QMessageBox, "information") as message):
+            dialog.change_path()
+        self.assertEqual(dialog.shortcuts[0], current)
+        message.assert_called_once()
+        dialog.reject(); dialog.deleteLater()
+
+    def test_change_active_shortcut_respects_unsaved_note_cancel(self):
+        from ui.widgets.tool_center import WorkspaceDialog
+        from PySide6.QtWidgets import QFileDialog
+        original = self.window.workspace
+        target = Path(self.temp.name) / "new-workspace"
+        target.mkdir()
+        entry = next(entry for entry in self.window.entries if entry.is_dir)
+        self.window._on_select(entry)
+        self.window._detail._note_edit.setPlainText("unsaved note")
+        dialog = WorkspaceDialog(self.window)
+        with patch.object(QFileDialog, "getExistingDirectory", return_value=str(target)):
+            dialog.change_path()
+        with patch.object(self.window._detail, "confirm_leave", return_value=False):
+            dialog.save()
+        self.assertEqual(self.window.workspace, original)
+        self.assertEqual(self.settings.get_presets()[0]["path"], str(original))
+        self.assertTrue(self.window._detail.has_unsaved_note())
+        self.window._detail._note_dirty = False
+        dialog.reject(); dialog.deleteLater()
+
+    def test_grid_fills_viewport_when_resizing_and_opening_details(self):
+        apply_theme(self.app, Path(__file__).resolve().parents[1], "light")
+        self.window.entries = [Entry(f"Tool {i}", Path(f"C:/tools/{i}"), "tools", "Tools", True)
+                               for i in range(100)]
+        self.window._set_view("grid")
+        for width, details in ((1100, False), (1280, False), (1600, False), (1280, True)):
+            self.window.resize(width, 760)
+            self.window._detail.setVisible(details)
+            QTest.qWait(20)
+            browser = self.window._browser
+            browser.doItemsLayout()
+            available = browser.viewport().width()
+            columns = max(1, (available-1)//GRID_SIZE.width())
+            first = browser.visualRect(browser.model().index(0, 0))
+            last = browser.visualRect(browser.model().index(columns-1, 0))
+            next_row = browser.visualRect(browser.model().index(columns, 0))
+            self.assertEqual(first.top(), last.top())
+            self.assertGreater(next_row.top(), first.top())
+            self.assertLessEqual(available-last.right()-1, columns+1)
+            self.assertLess(last.right(), available)
+
+    def test_panel_drag_resizes_and_persists_widths(self):
+        from PySide6.QtCore import QPoint
+        self.window.resize(1440,860)
+        QTest.qWait(20)
+        splitter=self.window._splitter
+        handle=splitter.handle(1)
+        before=self.window._sidebar.width()
+        center=handle.rect().center()
+        QTest.mousePress(handle,Qt.MouseButton.LeftButton,pos=center)
+        QTest.mouseMove(handle,QPoint(center.x()+60,center.y()),delay=10)
+        QTest.mouseRelease(handle,Qt.MouseButton.LeftButton,pos=QPoint(center.x()+60,center.y()))
+        self.assertGreater(self.window._sidebar.width(),before)
+        saved=Settings(self.settings.path).get('panel_widths')
+        self.assertEqual(saved['sidebar'],self.window._sidebar.width())
+        self.window._toggle_panel();QTest.qWait(20)
+        handle=splitter.handle(2);center=handle.rect().center();before=self.window._detail.width()
+        QTest.mousePress(handle,Qt.MouseButton.LeftButton,pos=center)
+        QTest.mouseMove(handle,QPoint(center.x()-50,center.y()),delay=10)
+        QTest.mouseRelease(handle,Qt.MouseButton.LeftButton,pos=QPoint(center.x()-50,center.y()))
+        self.assertGreater(self.window._detail.width(),before)
+        width=self.window._detail.width()
+        self.window._toggle_panel();self.window._toggle_panel();QTest.qWait(10)
+        self.assertAlmostEqual(self.window._detail.width(),width,delta=1)
+        handle=splitter.handle(1)
+        QTest.mouseDClick(handle,Qt.MouseButton.LeftButton,pos=handle.rect().center())
+        self.assertAlmostEqual(self.window._sidebar.width(),232,delta=1)
+        self.assertAlmostEqual(self.window._detail.width(),332,delta=1)
+
+    def test_scan_depth_setting_updates_background_scan(self):
+        from ui.widgets.settings_dialog import SettingsDialog
+        dialog=SettingsDialog(self.window.app_dir,self.settings,self.window)
+        dialog.scanDepthChanged.connect(self.window._set_scan_depth)
+        self.assertEqual(dialog._scan_depth.value(),2)
+        dialog._scan_depth.setValue(3)
+        self.assertEqual(Settings(self.settings.path).get('scan_depth'),3)
+        self.assertEqual(self.window._scanning_depth,3)
+        dialog.reject();dialog.deleteLater()
+
+    def test_shutdown_skips_already_disposed_scan_thread(self):
+        from PySide6.QtCore import QThread
+        from shiboken6 import delete
+        thread=QThread()
+        delete(thread)
+        self.window._scans.append((thread,None))
+        self.window._stop_scan()
+        self.assertEqual(self.window._scans,[])
+        self.window._closing=True
+        self.window.reload()
+        self.assertFalse(self.window._reloading)
 
 
 if __name__ == "__main__":

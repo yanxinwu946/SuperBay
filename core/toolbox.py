@@ -15,16 +15,15 @@ def workspace_roots(settings, current):
     return [Path(current)]
 
 
-def scan_roots(roots):
+def scan_roots(roots, max_depth=scanner.DEFAULT_SCAN_DEPTH):
     seen, categories = set(), []
     multiple = len(roots) > 1
     for root in roots:
-        for cat in scanner.scan(root):
+        for cat in scanner.scan(root, max_depth=max_depth):
             cat.entries = [e for e in cat.entries if os.path.normcase(str(e.path.resolve())) not in seen]
             for e in cat.entries:
                 seen.add(os.path.normcase(str(e.path.resolve())))
-            if not cat.entries:
-                continue
+            # Keep structural parents so nested navigation can expand them.
             if multiple:
                 cat.cat_id = str(cat.path.resolve())
                 cat.name = f'{cat.name} · {root.name}'

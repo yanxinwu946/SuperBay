@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QListView, QStyledItemDe
 class _OptionDelegate(QStyledItemDelegate):
     def sizeHint(self, option, index):
         metrics = QFontMetrics(self.parent().view().font())
-        return QSize(max(180, metrics.horizontalAdvance(str(index.data() or '')) + 72), 36)
+        return QSize(max(120, metrics.horizontalAdvance(str(index.data() or '')) + 56), 34)
 
     def paint(self, painter, option, index):
         dark = QApplication.instance().property('superguiTheme') == 'dark'
@@ -18,30 +18,22 @@ class _OptionDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = option.rect.adjusted(4, 2, -4, -2)
-        material = self.parent().objectName() == 'WorkspaceSelector'
         if current or hovered or focused:
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(('#2f5d43' if dark else '#e9f7ef') if current
+            painter.setBrush(QColor(('#294536' if dark else '#edf7f1') if current
                                     else ('#343941' if dark else '#f4f6f8')))
-            if material:
-                painter.setBrush(QColor(255,255,255,26 if dark else 210) if current
-                                 else QColor(255,255,255,14 if dark else 120))
-                if current:
-                    painter.setPen(QColor(255,255,255,25) if dark else QColor(43,50,61,20))
-            painter.drawRoundedRect(QRectF(rect), 8 if material else 6, 8 if material else 6)
+            painter.drawRoundedRect(QRectF(rect), 6, 6)
         font = QFont(self.parent().view().font())
-        if current:
-            font.setWeight(QFont.Weight.Medium if material else QFont.Weight.DemiBold)
+        font.setWeight(QFont.Weight.Normal)
         painter.setFont(font)
         painter.setPen(QColor('#e6e9ee' if dark else '#2b323d'))
-        text_rect = rect.adjusted(12, 0, -12, 0)
+        text_rect = rect.adjusted(10, 0, -30, 0)
         text = QFontMetrics(font).elidedText(str(index.data() or ''), Qt.TextElideMode.ElideRight, text_rect.width())
         painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
-        # A focused row has a quiet inset outline; selection uses fill and weight.
-        if focused and self.parent().view().hasFocus():
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.setPen(QColor('#9aa3af' if dark else '#6b7380'))
-            painter.drawRoundedRect(QRectF(rect.adjusted(1, 1, -1, -1)), 5, 5)
+        if current:
+            painter.setPen(QColor('#80c99a' if dark else '#27834e'))
+            painter.drawText(rect.adjusted(0, 0, -10, 0),
+                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, '✓')
         painter.restore()
 
 
@@ -49,6 +41,7 @@ class ModernComboBox(QComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         view = QListView(self)
+        view.setObjectName("ComboPopup")
         view.setFrameShape(QListView.Shape.NoFrame)
         view.setUniformItemSizes(True)
         view.setMouseTracking(True)
@@ -74,13 +67,16 @@ class ModernComboBox(QComboBox):
         font = QFont("Microsoft YaHei UI")
         font.setPixelSize(13)
         view.setFont(font)
-        font.setWeight(QFont.Weight.DemiBold)
+        font.setWeight(QFont.Weight.Normal)
         metrics = QFontMetrics(font)
         text_width = max((metrics.horizontalAdvance(self.itemText(i))
                           for i in range(self.count())), default=0)
-        wanted = max(self.width(), 180, text_width + 88)
+        wanted = max(self.width(), 120, text_width + 56)
         screen = self.screen().availableGeometry()
         view.setMinimumWidth(min(wanted, max(100, screen.width() - 24)))
+        # Reassert after polishing: Qt may install its menu delegate during setup.
+        if not isinstance(view.itemDelegate(), _OptionDelegate):
+            self.setItemDelegate(_OptionDelegate(self))
         super().showPopup()
         popup = view.window()
         width = min(max(popup.width(), wanted), screen.width() - 24)

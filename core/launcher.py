@@ -9,6 +9,7 @@ import ctypes
 import logging
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from .models import DEFAULT_SHELL, Entry
@@ -47,7 +48,16 @@ def _run_custom(shell_type: str, command: str, cwd: Path) -> None:
 
 def _shell_execute_w(verb: str, file: str, args: str | None, cwd: Path) -> None:
     """ShellExecuteW 启动；返回值 ≤32 就是错误码，不抛异常。"""
-    ret = ctypes.windll.shell32.ShellExecuteW(None, verb, file, args, str(cwd), 1)
+    bundle = getattr(sys, "_MEIPASS", None)
+    if bundle:
+        set_directory = ctypes.windll.kernel32.SetDllDirectoryW
+        set_directory.argtypes = [ctypes.c_wchar_p]
+        set_directory(None)
+    try:
+        ret = ctypes.windll.shell32.ShellExecuteW(None, verb, file, args, str(cwd), 1)
+    finally:
+        if bundle:
+            set_directory(bundle)
     if ret <= 32:
         raise RuntimeError(f"启动失败（错误码 {ret}）")
 

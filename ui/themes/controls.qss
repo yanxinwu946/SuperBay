@@ -9,13 +9,13 @@ QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover, QDateEdit:hover, QTimeEdi
 QComboBox:focus, QComboBox:on, QSpinBox:focus, QDoubleSpinBox:focus { border-color: #3cb56f; }
 QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 30px; border: none; }
 QComboBox::down-arrow { image: url(@assets/chevron-@theme.svg); width: 16px; height: 16px; }
-QComboBox QAbstractItemView {
+QComboBox QListView, QListView#ComboPopup {
     background: @surface; color: @text; border: 1px solid @border;
     border-radius: 8px; padding: 6px; outline: none;
     selection-background-color: @selection; selection-color: @text;
 }
-QComboBox QAbstractItemView::item { min-height: 30px; padding: 4px 10px; border-radius: 5px; }
-QComboBox QAbstractItemView::item:selected { background: @selection; color: @text; }
+QComboBox QListView::item, QListView#ComboPopup::item { min-height: 30px; padding: 4px 10px; border-radius: 5px; }
+QComboBox QListView::item:selected, QListView#ComboPopup::item:selected { background: @selection; color: @text; }
 QLineEdit { background: @surface; border: 1px solid @border; border-radius: 8px; padding: 8px 12px; min-height: 18px; }
 QLineEdit:hover { border-color: @muted; }
 QLineEdit:focus { border-color: #3cb56f; }

@@ -43,6 +43,7 @@ from core.runtime_profile import profile_environment
 from core.search import SearchIndex
 from ui.widgets.entry_view import EntryView, EntryHeader, ENTRY_ROLE
 from ui.glass import GlassCanvas
+from ui.widgets.panel_splitter import PanelSplitter
 from core.models import Category, Entry
 from core.version import __version__
 from config.db import DB
@@ -64,7 +65,7 @@ from ui.misc import (
 from ui.widgets.detail import CommandDialog, DetailPanel
 from ui.theme import apply_theme
 from ui.widgets.settings_dialog import SettingsDialog
-from ui.widgets.sidebar import SideBar
+from ui.widgets.workspace_sidebar import WorkspaceSideBar as SideBar
 
 log = logging.getLogger(__name__)
 
@@ -105,15 +106,16 @@ class _ScanWorker(QObject):
     done = Signal(object, object)   # categories, note_cache
     failed = Signal(str)
 
-    def __init__(self, workspace: Path, roots=None):
+    def __init__(self, workspace: Path, roots=None, max_depth=scanner.DEFAULT_SCAN_DEPTH):
         super().__init__()
         self._workspace = Path(workspace)
         self._roots = roots or [self._workspace]
+        self._max_depth = max_depth
 
     def run(self) -> None:
         try:
             from core.toolbox import scan_roots
-            categories = scan_roots(self._roots)
+            categories = scan_roots(self._roots, max_depth=self._max_depth)
             entries = [e for c in categories for e in c.entries]
             note_cache = {
                 str(e.path): notes.read_note_head(e.note_path, NOTE_CACHE_BYTES).lower()
@@ -219,7 +221,6 @@ class MainWindow(QMainWindow):
 
         self._workspace_selector = QComboBox()
         self._workspace_selector.setObjectName("WorkspaceSelector")
-        self._workspace_selector.view().setObjectName("WorkspacePopup")
         self._workspace_selector.setFixedHeight(36)
         self._workspace_selector.setMinimumWidth(144)
         self._workspace_selector.setMaximumWidth(220)
@@ -311,22 +312,25 @@ class MainWindow(QMainWindow):
     def _build_central(self) -> None:
         central = GlassCanvas()
         root = QVBoxLayout(central)
-        root.setContentsMargins(12, 12, 12, 4)
-        root.setSpacing(12)
+        root.setContentsMargins(10, 10, 10, 4)
+        root.setSpacing(8)
         root.addWidget(self._topbar)
 
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(12)
+        body = PanelSplitter()
+        self._splitter = body
 
         self._sidebar = SideBar()
         self._sidebar.navChanged.connect(self._on_nav)
         self._sidebar.tagChanged.connect(self._on_tag)
         body.addWidget(self._sidebar)
 
-        body.addWidget(self._make_content(), 1)
+        self._content_panel = self._make_content()
+        self._content_panel.setMinimumWidth(420)
+        body.addWidget(self._content_panel)
 
         self._detail = DetailPanel()
+        self._detail.setMinimumWidth(280)
+        self._detail.setMaximumWidth(640)
         self._detail.setVisible(self._panel_btn.isChecked())
         self._detail.launchRequested.connect(lambda e: self._launch(e, False))
         self._detail.openDirRequested.connect(lambda e: launcher.open_in_explorer(e.path))
@@ -339,7 +343,15 @@ class MainWindow(QMainWindow):
         self._detail.presetsRequested.connect(self._edit_presets)
         body.addWidget(self._detail)
 
-        root.addLayout(body, 1)
+        body.setStretchFactor(0, 0)
+        body.setStretchFactor(1, 1)
+        body.setStretchFactor(2, 0)
+        widths = self.settings.get("panel_widths", {})
+        self._preferred_detail_width = max(280, min(640, int(widths.get("detail", 332))))
+        body.layoutCommitted.connect(self._save_panel_widths)
+        body.resetRequested.connect(self._reset_panel_widths)
+        root.addWidget(body, 1)
+        QTimer.singleShot(0, lambda: self._restore_panel_widths(initial=True))
         self.setCentralWidget(central)
 
     def _make_content(self) -> QFrame:
@@ -347,7 +359,7 @@ class MainWindow(QMainWindow):
         content = QFrame()
         content.setObjectName("Content")
         lay = QVBoxLayout(content)
-        lay.setContentsMargins(20, 16, 20, 12)
+        lay.setContentsMargins(16, 16, 16, 12)
         lay.setSpacing(10)
 
         header = QHBoxLayout()
@@ -359,6 +371,7 @@ class MainWindow(QMainWindow):
         header.addWidget(self._count_lbl)
         header.addStretch(1)
         quick = QPushButton("快速启动  Ctrl+P")
+        self._quick_start = quick
         quick.setObjectName("GhostBtn")
         quick.clicked.connect(self._open_palette)
         # §2.1/§3.6: one compact toolbar reserves space for results.
@@ -383,6 +396,10 @@ class MainWindow(QMainWindow):
         self._filter_reset.hide()
         lay.addWidget(self._filter_reset, 0, Qt.AlignmentFlag.AlignLeft)
 
+        from ui.widgets.overview import Overview
+        self._overview = Overview()
+        lay.addWidget(self._overview)
+
         self._list_header = EntryHeader()
         lay.addWidget(self._list_header)
         self._browser = EntryView(self._icon_for, lambda: self.settings.get("theme") == "dark")
@@ -396,6 +413,7 @@ class MainWindow(QMainWindow):
         self._empty_tip.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_tip.setWordWrap(True)
         lay.addWidget(self._empty_tip, 1)
+        content.installEventFilter(self)
         return content
 
     def _build_statusbar(self) -> None:
@@ -483,6 +501,8 @@ class MainWindow(QMainWindow):
     # ── 数据流（扫描 → 合并 db → 重建） ──
     def reload(self) -> None:
         """后台重扫工作区，完成后合并 db 元数据并重建 UI（不阻塞主线程）。"""
+        if getattr(self, "_closing", False):
+            return
         if self._reloading:
             self._reload_pending = True   # 扫描期间的请求，完成后补一次
             return
@@ -494,7 +514,8 @@ class MainWindow(QMainWindow):
 
         from core.toolbox import workspace_roots
         self._scanning_roots = tuple(str(p) for p in workspace_roots(self.settings, self.workspace))
-        worker = _ScanWorker(self.workspace, [Path(p) for p in self._scanning_roots])
+        self._scanning_depth = scanner.normalize_scan_depth(self.settings.get("scan_depth", 2))
+        worker = _ScanWorker(self.workspace, [Path(p) for p in self._scanning_roots], self._scanning_depth)
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -513,11 +534,17 @@ class MainWindow(QMainWindow):
         self._scans = [pair for pair in self._scans if pair[0] is not thread]
 
     def _on_scan_done(self, categories: list[Category], note_cache: dict[str, str]) -> None:
+        if getattr(self, "_closing", False):
+            return
         self._reloading = False
         if self._scan_workspace is not None \
                 and not self._same_path(self._scan_workspace, self.workspace):
             # 扫描期间切了工作区：丢弃这次结果，按新工作区重扫
             self._scan_workspace = None
+            self._reload_pending = False
+            self.reload()
+            return
+        if getattr(self, "_scanning_depth", 2) != scanner.normalize_scan_depth(self.settings.get("scan_depth", 2)):
             self._reload_pending = False
             self.reload()
             return
@@ -543,6 +570,9 @@ class MainWindow(QMainWindow):
             self._restore_path = None
             self._reload_pending = False
 
+        if self.nav not in ("all", "star", "recent") and not any(c.cat_id == self.nav for c in categories):
+            self.nav = "all"
+            self._sidebar.set_current("all")
         self._rebuild_sidebar()
         self._rebuild_grid()
         self._set_status("就绪")
@@ -563,6 +593,8 @@ class MainWindow(QMainWindow):
             self.reload()
 
     def _on_scan_failed(self, msg: str) -> None:
+        if getattr(self, "_closing", False):
+            return
         self._reloading = False
         self._scan_workspace = None
         log.error("重新扫描失败: %s", msg)
@@ -612,7 +644,7 @@ class MainWindow(QMainWindow):
 
     def _rebuild_sidebar(self) -> None:
         entries = self.entries
-        cats = [c for c in self.categories if c.entries]  # 空分类不显示
+        cats = [c for c in self.categories if c.entries or any(e.cat_id.startswith(c.cat_id + "/") for e in entries)]
         self._sidebar.rebuild(
             cats, len(entries),
             star_count=sum(1 for e in entries if e.pinned),
@@ -623,7 +655,9 @@ class MainWindow(QMainWindow):
         available = self._sidebar.width() - 20 - self._sidebar._cat_scroll.verticalScrollBar().sizeHint().width()
         for key, button in self._sidebar._nav_buttons.items():
             if key not in ("all", "star", "recent"):
-                button.setMaximumWidth(max(96, available))
+                category = next((c for c in cats if c.cat_id == key), None)
+                indent = min(category.depth, 3)*12 if category else 0
+                button.setMaximumWidth(max(96, available-18-indent))
 
 
     def _filtered(self) -> list[Entry]:
@@ -638,7 +672,7 @@ class MainWindow(QMainWindow):
         elif self.nav == "recent":
             items = [e for e in items if e.runs > 0]
         elif self.nav != "all":
-            items = [e for e in items if e.cat_id == self.nav]
+            items = [e for e in items if e.cat_id == self.nav or e.cat_id.startswith(self.nav + "/")]
         if self.tag:
             items = [e for e in items if self.tag in e.tags]
         if self.kind != "all":
@@ -707,6 +741,8 @@ class MainWindow(QMainWindow):
 
     def _rebuild_grid(self) -> None:
         items = self._filtered()
+        self._overview.set_entries(items)
+        self._overview.setVisible(self.view == "grid" and bool(items))
         self._filter_reset.setVisible(bool(self.query or self.tag or self.nav != "all" or self.kind != "all"))
         self._title.setText(self._current_title())
         self._count_lbl.setText(f"{len(items)} 项" if len(items) == len(self.entries)
@@ -769,6 +805,8 @@ class MainWindow(QMainWindow):
         self._search.selectAll()
 
     def eventFilter(self, obj, event):
+        if obj is getattr(self, "_content_panel", None) and event.type() == QEvent.Type.Resize:
+            self._quick_start.setVisible(event.size().width() >= 600)
         if obj is self._search and event.type() == QEvent.Type.KeyPress:
             if event.key() in (Qt.Key.Key_Down, Qt.Key.Key_Return, Qt.Key.Key_Enter):
                 if self._search_timer.isActive():
@@ -993,11 +1031,36 @@ class MainWindow(QMainWindow):
     def _toggle_theme(self) -> None:
         self._apply_theme("dark" if self.settings.get("theme") == "light" else "light")
 
+    def _panel_widths(self) -> dict:
+        if not self._detail.isHidden():
+            self._preferred_detail_width = self._detail.width()
+        return {"sidebar": self._sidebar.width(), "detail": self._preferred_detail_width}
+
+    def _save_panel_widths(self) -> None:
+        self.settings.set("panel_widths", self._panel_widths())
+
+    def _restore_panel_widths(self, initial=False) -> None:
+        stored = self.settings.get("panel_widths", {})
+        side = stored.get("sidebar", 232) if initial else self._sidebar.width()
+        side = max(200, min(420, int(side)))
+        detail = 0 if self._detail.isHidden() else self._preferred_detail_width
+        handles = self._splitter.handleWidth() * (1 if self._detail.isHidden() else 2)
+        self._splitter.setSizes([side, max(420, self._splitter.width()-side-detail-handles), detail])
+
+    def _reset_panel_widths(self) -> None:
+        self._preferred_detail_width = 332
+        self.settings.set("panel_widths", {"sidebar": 232, "detail": 332})
+        self._restore_panel_widths(initial=True)
+        self._save_panel_widths()
+
     def _toggle_panel(self) -> None:
-        visible = not self._detail.isVisible()
+        visible = self._detail.isHidden()
+        if not visible:
+            self._preferred_detail_width = self._detail.width()
         self._detail.setVisible(visible)
         self._panel_btn.setChecked(visible)
-        self.settings.set("detail_visible", visible)
+        self._restore_panel_widths()
+        self.settings.update({"detail_visible": visible, "panel_widths": self._panel_widths()})
 
     def _set_titlebar_style(self, style: str) -> None:
         self.settings.set("titlebar", "native")
@@ -1089,6 +1152,12 @@ class MainWindow(QMainWindow):
         dialog = ScoopDialog(self.settings, self)
         dialog.exec()
 
+    def _set_scan_depth(self, depth: int) -> None:
+        depth = scanner.normalize_scan_depth(depth)
+        if self.settings.get("scan_depth", 2) != depth:
+            self.settings.set("scan_depth", depth)
+            self.reload()
+
     def _show_settings(self) -> None:
         """设置对话框：外观 / 工作区 / 热键 / 数据位置，widgets 只发信号。"""
         dlg = SettingsDialog(self.app_dir, self.settings, self)
@@ -1101,6 +1170,7 @@ class MainWindow(QMainWindow):
         dlg.workspaceChangeRequested.connect(
             lambda: (self._change_workspace(), dlg.refresh_workspace()))
         dlg.presetsChanged.connect(self._on_presets_changed)
+        dlg.scanDepthChanged.connect(self._set_scan_depth)
         dlg.exec()
 
     def _on_presets_changed(self, presets: list) -> None:
@@ -1143,10 +1213,14 @@ class MainWindow(QMainWindow):
 
     def _stop_scan(self) -> None:
         """退出前等后台扫描收尾，避免 QThread 运行中被销毁。"""
+        from shiboken6 import isValid
         for thread, _worker in list(self._scans):
-            thread.quit()
+            if isValid(thread):
+                thread.quit()
         for thread, _worker in list(self._scans):
-            thread.wait()
+            if isValid(thread):
+                thread.wait()
+        self._scans.clear()
 
     def toggle_visibility(self) -> None:
         """全局热键 / 第二实例唤起：显示时顺便聚焦搜索框，直接打字即搜。"""
@@ -1198,6 +1272,8 @@ class MainWindow(QMainWindow):
             if self._detail.has_unsaved_note() and not self._detail.confirm_leave():
                 e.ignore()
                 return
+            self._save_panel_widths()
+            self._closing = True
             self._stop_scan()
             geo = self.normalGeometry() if self.isMaximized() else self.geometry()
             self.settings.set("window", {"w": geo.width(), "h": geo.height(),

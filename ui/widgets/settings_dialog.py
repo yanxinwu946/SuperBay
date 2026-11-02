@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -61,6 +62,7 @@ class SettingsDialog(QDialog):
     windowSizeChanged = Signal(int, int)     # 校验通过的窗口尺寸 (宽, 高)
     workspaceChangeRequested = Signal()      # 让 MainWindow 弹目录选择
     presetsChanged = Signal(list)            # 工作区快捷按钮预设 [{name, path}] ×2
+    scanDepthChanged = Signal(int)
 
     def __init__(self, app_dir: Path, settings: Settings,
                  parent: QWidget | None = None):
@@ -328,6 +330,17 @@ class SettingsDialog(QDialog):
         lay.addWidget(btn)
         inner.addWidget(row)
         inner.addWidget(self._hint("从此目录发现工具，更改后自动刷新"))
+        from core.scanner import MAX_SCAN_DEPTH, normalize_scan_depth
+        row, lay = self._row("嵌套层数")
+        self._scan_depth = QSpinBox()
+        self._scan_depth.setRange(1, MAX_SCAN_DEPTH)
+        self._scan_depth.setSuffix(" 级")
+        self._scan_depth.setValue(normalize_scan_depth(self.settings.get("scan_depth", 2)))
+        self._scan_depth.setKeyboardTracking(False)
+        self._scan_depth.valueChanged.connect(self.scanDepthChanged.emit)
+        lay.addWidget(self._scan_depth, 1)
+        inner.addWidget(row)
+        inner.addWidget(self._hint("默认 2 级。达到上限的文件夹保留为条目；菜单默认只显示第 1 级。"))
 
         return box
 

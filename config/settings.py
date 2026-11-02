@@ -18,6 +18,7 @@ DEFAULTS = {
     "show_tags": False,        # 侧栏标签云默认隐藏
     "hotkey": "Alt+Space",
     "scoop_root": "",          # 空则自动发现当前 Windows 用户的 Scoop 安装
+    "scan_depth": 2,           # 目录层级，工作区根目录不计入
     "window": {"w": 1440, "h": 860, "x": None, "y": None, "maximized": False},  # x/y 为空则交给系统摆放
 }
 

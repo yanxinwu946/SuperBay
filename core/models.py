@@ -53,3 +53,5 @@ class Category:
     name: str               # 显示名（如 资产发现）
     path: Path
     entries: list[Entry] = field(default_factory=list)
+    parent_id: str | None = None
+    depth: int = 0

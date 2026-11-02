@@ -63,22 +63,6 @@ QMenu { border-radius: 12px; border-color: @glassEdge; }
 #SettingsDialog QDialogButtonBox QPushButton { background: @primary; color: @primaryText; border: none; border-radius: 12px; }
 #SettingsDialog QDialogButtonBox QPushButton:hover { background: @primary; border: 1px solid @glassHighlight; }
 
-/* Directory chooser belongs to the material toolbar, not the form controls. */
-#WorkspaceSelector {
-    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 @glassTop,stop:1 @glassBottom);
-    border: 1px solid @glassEdge; border-top-color: @glassHighlight;
-    border-radius: 12px; padding: 6px 32px 6px 12px;
-    color: @text; font-size: 13px; font-weight: 500;
-}
-#WorkspaceSelector:hover { background: @surface; border-color: @glassHighlight; }
-#WorkspaceSelector:focus, #WorkspaceSelector:on { background: @surface; border-color: @muted; }
-#WorkspaceSelector::drop-down { width: 28px; border: none; background: transparent; }
-#WorkspacePopup {
-    background: @contentSurface; color: @text;
-    border: 1px solid @glassEdge; border-top-color: @glassHighlight;
-    border-radius: 12px; padding: 6px; outline: none;
-}
-
 /* Shortcut management shares the preference cards and toolbar material. */
 #ShortcutManager { background: @base; }
 #ShortcutManager #ContentTitle { font-size: 24px; font-weight: 600; }
@@ -92,3 +76,10 @@ QMenu { border-radius: 12px; border-color: @glassEdge; }
 #ShortcutManager #GhostBtn { min-height: 20px; padding: 7px 14px; font-weight: 500; }
 #ShortcutManager #GhostBtn:disabled { color: @muted; background: transparent; border-color: @glassEdge; }
 #ShortcutManager #PrimaryBtn { min-width: 64px; min-height: 20px; padding: 7px 16px; font-weight: 600; }
+
+/* A denser workspace keeps tool cards and details visually connected. */
+#TopBar, #SideBar, #DetailPanel { border-radius: 12px; }
+#Content { border-radius: 12px; }
+#ContentTitle { font-size: 20px; font-weight: 600; }
+#SideBar #NavButton { border-radius: 8px; }
+#SearchBar { border-radius: 10px; }

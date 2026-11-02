@@ -17,7 +17,9 @@ from core.version import __version__
 from ui.main_window import IPC_NAME, MSG, MainWindow
 from ui.theme import apply_theme
 
-APP_DIR = Path(__file__).resolve().parent
+from core.app_paths import data_dir
+
+APP_DIR = data_dir()
 LOCK_FILE_NAME = "supergui.lock"
 
 log = logging.getLogger(__name__)

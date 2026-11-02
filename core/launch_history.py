@@ -37,9 +37,17 @@ def start(entry, args, environment, admin, folder):
     python=Path(sys.executable)
     if python.name.lower()=='pythonw.exe': python=python.with_name('python.exe')
     worker=Path(__file__).with_name('launch_worker.py')
+    frozen = getattr(sys, 'frozen', False)
+    parameters = ['--launch-worker', str(request_path.resolve())] if frozen else [str(worker), str(request_path.resolve())]
+    previous_reset = os.environ.get('PYINSTALLER_RESET_ENVIRONMENT')
     try:
-        launcher._shell_execute_w('runas' if admin else 'open',str(python),
-                                 subprocess.list2cmdline([str(worker),str(request_path)]),worker.parent)
+        if frozen: os.environ['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
+        try:
+            launcher._shell_execute_w('runas' if admin else 'open', str(python),
+                                     subprocess.list2cmdline(parameters), folder.resolve())
+        finally:
+            if previous_reset is None: os.environ.pop('PYINSTALLER_RESET_ENVIRONMENT', None)
+            else: os.environ['PYINSTALLER_RESET_ENVIRONMENT'] = previous_reset
     except Exception:
         request_path.unlink(missing_ok=True);status.unlink(missing_ok=True)
         raise

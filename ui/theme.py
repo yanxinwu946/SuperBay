@@ -9,6 +9,10 @@ log = logging.getLogger(__name__)
 
 def apply_theme(app: QApplication, app_dir: Path, theme: str) -> None:
     """加载 ui/themes/<theme>.qss；文件没了只记日志，不影响启动。"""
+    import sys
+    if getattr(sys, "frozen", False):
+        from core.app_paths import RESOURCE_DIR
+        app_dir = RESOURCE_DIR
     qss_path = app_dir / "ui" / "themes" / f"{theme}.qss"
     try:
         app.setProperty("superguiTheme", theme)

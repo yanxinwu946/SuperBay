@@ -84,6 +84,7 @@ class WorkspaceDialog(QDialog):
         self.empty=QLabel('还没有快捷入口\n添加一个常用目录，随时切换。');self.empty.setObjectName('ShortcutEmpty');self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content.addWidget(self.empty,1);layout.addWidget(card,1)
         footer=QHBoxLayout()
+        self.path_button=button('更改路径',self.change_path,footer)
         self.rename_button=button('重命名',self.rename,footer)
         self.remove_button=button('移除',self.remove,footer)
         footer.addStretch();button('取消',self.reject,footer)
@@ -92,14 +93,19 @@ class WorkspaceDialog(QDialog):
         self.list.currentRowChanged.connect(self.selection_changed)
         self.list.itemDoubleClicked.connect(lambda _:self.rename())
         self.shortcuts=[dict(p) for p in main.settings.get_presets()]
+        self._active_shortcut=next((value for value in self.shortcuts
+                                   if main._same_path(value['path'],main.workspace)),None)
         self.refresh()
+        if self._active_shortcut is not None:
+            self.list.setCurrentRow(next(i for i,value in enumerate(self.shortcuts)
+                                        if value is self._active_shortcut))
     def selection_changed(self,*_):
         enabled=self.list.currentRow()>=0
-        self.rename_button.setEnabled(enabled);self.remove_button.setEnabled(enabled)
+        self.path_button.setEnabled(enabled);self.rename_button.setEnabled(enabled);self.remove_button.setEnabled(enabled)
     def refresh(self):
         selected=self.list.currentRow();self.list.clear()
         for value in self.shortcuts:
-            data=dict(value,active=self.main._same_path(value['path'],self.main.workspace),available=Path(value['path']).is_dir())
+            data=dict(value,active=value is self._active_shortcut,available=Path(value['path']).is_dir())
             item=QListWidgetItem(value['name']);item.setData(Qt.ItemDataRole.UserRole,data)
             item.setToolTip(value['name']+'\n'+value['path']);self.list.addItem(item)
         if self.shortcuts:self.list.setCurrentRow(min(max(0,selected),len(self.shortcuts)-1))
@@ -114,17 +120,35 @@ class WorkspaceDialog(QDialog):
         if row<0:return
         name,ok=QInputDialog.getText(self,'入口名称','名称',text=self.shortcuts[row]['name'])
         if ok and name.strip():self.shortcuts[row]['name']=name.strip();self.refresh();self.list.setCurrentRow(row)
+    def change_path(self):
+        row=self.list.currentRow()
+        if row<0:return
+        path=QFileDialog.getExistingDirectory(self,'更改入口路径',self.shortcuts[row]['path'])
+        if not path:return
+        if not Path(path).is_dir():
+            QMessageBox.information(self,'目录不可用','请选择有效目录。');return
+        if any(i!=row and self.main._same_path(path,value['path']) for i,value in enumerate(self.shortcuts)):
+            QMessageBox.information(self,'入口已存在','此目录已有快捷入口。');return
+        self.shortcuts[row]['path']=path
+        self.refresh();self.list.setCurrentRow(row)
     def remove(self):
         row=self.list.currentRow()
         if row>=0:self.shortcuts.pop(row);self.refresh()
     def save(self):
+        if (self._active_shortcut is not None and any(value is self._active_shortcut for value in self.shortcuts)
+                and not self.main._same_path(self._active_shortcut['path'],self.main.workspace)):
+            target=Path(self._active_shortcut['path'])
+            if not target.is_dir():
+                QMessageBox.information(self,'目录不可用','入口目录已不可用，请重新选择。');return
+            self.main._switch_workspace(target)
+            if not self.main._same_path(self.main.workspace,target):return
         self.main.settings.set_presets(self.shortcuts);self.main._refresh_workspace_buttons();self.accept()
 
 
 class PresetDialog(QDialog):
     def __init__(self,main,entry):
         super().__init__(main);self.main=main;self.entry=entry
-        layout=heading(self,'启动配置',entry.name+' · 为不同用途保存参数与环境绑定')
+        layout=heading(self,'启动配置',entry.name+' · 保存多套命令、参数与环境，在此选择配置启动；不改变默认命令')
         self.choices=ModernComboBox();layout.addWidget(self.choices)
         form=QFormLayout();self.name=QLineEdit();self.command=QLineEdit();self.args=QLineEdit();self.admin=QCheckBox('以管理员身份启动')
         self.command.setPlaceholderText('留空则使用工具默认命令')

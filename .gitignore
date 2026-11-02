@@ -25,3 +25,15 @@ assets/*-fixed.png
 assets/workspace-glass-*.png
 assets/shortcut-manager-*.png
 assets/toolbox-manager-*.png
+
+/.build/
+/release/
+
+# Unused local web scaffold and dependencies
+/node_modules/
+/src/
+/index.html
+/package.json
+/package-lock.json
+/tsconfig.json
+/vite.config.ts

@@ -4,6 +4,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QToolButton,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -77,7 +78,7 @@ class SideBar(QWidget):
         super().__init__(parent)
         self.setObjectName("SideBar")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setFixedWidth(200)
+        self.setFixedWidth(232)
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(10, 14, 10, 10)
         self._lay.setSpacing(2)
@@ -85,6 +86,8 @@ class SideBar(QWidget):
         self._group.setExclusive(True)
         self._nav_buttons: dict[str, QPushButton] = {}
         self._tag_buttons: dict[str, QPushButton] = {}
+        self._collapsed = set()
+        self._category_rows = {}
         self._current_nav = "all"
         self._current_tag: str | None = None
 
@@ -118,12 +121,52 @@ class SideBar(QWidget):
         lay = QVBoxLayout(box)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
+        self._category_rows = {}
+        parents = {cat.parent_id for cat in categories if cat.parent_id}
+        counts = {cat.cat_id: len(cat.entries) for cat in categories}
+        for cat in reversed(categories):
+            if cat.parent_id in counts:
+                counts[cat.parent_id] += counts[cat.cat_id]
         for cat in categories:
-            lay.addWidget(self._nav_btn(cat.cat_id, cat.name, len(cat.entries), SVG_FOLDER))
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            indent = min(cat.depth, 3)*12
+            row_layout.setContentsMargins(indent, 0, 0, 0)
+            row_layout.setSpacing(2)
+            arrow = QToolButton()
+            arrow.setObjectName("CategoryExpand")
+            arrow.setFixedSize(16, 28)
+            arrow.setAutoRaise(True)
+            if cat.cat_id in parents:
+                arrow.clicked.connect(lambda _=False, key=cat.cat_id: self._toggle_category(key))
+                arrow.setToolTip("展开或收起子分类")
+            else:
+                arrow.setEnabled(False)
+            row_layout.addWidget(arrow, 0, Qt.AlignmentFlag.AlignTop)
+            button = self._nav_btn(cat.cat_id, cat.name, counts[cat.cat_id], SVG_FOLDER)
+            button.setMaximumWidth(max(96, self.width()-20-18-indent-14))
+            button.setToolTip(str(cat.path))
+            row_layout.addWidget(button, 1)
+            self._category_rows[cat.cat_id] = (row, cat, arrow, cat.cat_id in parents)
+            lay.addWidget(row)
+        self._update_category_tree()
         lay.addStretch(1)
         scroll.setWidget(box)
         self._lay.addWidget(scroll, 1)
         self._cat_scroll = scroll
+
+    def _toggle_category(self, key):
+        if key in self._collapsed:
+            self._collapsed.remove(key)
+        else:
+            self._collapsed.add(key)
+        self._update_category_tree()
+
+    def _update_category_tree(self):
+        for key, (row, category, arrow, expandable) in self._category_rows.items():
+            row.setVisible(not any(key.startswith(parent + "/") for parent in self._collapsed))
+            arrow.setArrowType((Qt.ArrowType.RightArrow if key in self._collapsed else Qt.ArrowType.DownArrow)
+                               if expandable else Qt.ArrowType.NoArrow)
 
     def _build_tag_cloud(self, tags: list[str]) -> None:
         """标签云：流式布局 + 限高滚动。标签和导航互斥，高亮逻辑在 _sync_state。"""

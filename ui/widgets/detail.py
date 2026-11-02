@@ -38,6 +38,9 @@ class CommandDialog(QDialog):
         lay.setContentsMargins(18, 18, 18, 18)
         lay.setSpacing(12)
 
+        hint = QLabel("保存后，直接点击工具的“启动”时使用此命令。")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
         lay.addWidget(QLabel("启动命令"))
         self.cmd_edit = QLineEdit(command or "")
         self.cmd_edit.setPlaceholderText("例如：python app.py（留空自动识别）")
@@ -75,7 +78,8 @@ class DetailPanel(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("DetailPanel")
-        self.setFixedWidth(332)
+        self.setMinimumWidth(280)
+        self.setMaximumWidth(640)
         self._entry: Entry | None = None
         self._editing = False
         self._note_dirty = False     # 编辑器里有未保存改动
@@ -174,6 +178,11 @@ class DetailPanel(QFrame):
         head.addWidget(self._mini_btn("配置", lambda: self._entry and self.presetsRequested.emit(self._entry)))
         head.addWidget(self._mini_btn("编辑", self._edit_command))
         lay.addLayout(head)
+
+        hint = QLabel("编辑：修改默认启动命令；配置：保存多套命令、参数与环境。")
+        hint.setObjectName("ContentSub")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
 
         self._cmd = QLabel()
         self._cmd.setObjectName("CmdBox")
