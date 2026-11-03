@@ -176,8 +176,10 @@ class ToolFilesDialog(QDialog):
         name, ok = QInputDialog.getText(self, '重命名', '新名称', text=path.name)
         if not ok or name == path.name: return
         try:
-            source = inside(self.root, path)
-            target = inside(self.root, path.with_name(valid_name(name)))
+            inside(self.root, path)
+            source = path
+            target = path.with_name(valid_name(name))
+            inside(self.root, target)
             if target.exists(): raise ValueError('目标名称已存在')
             if self.db is not None: relocate(self.db, self.root, [(source, target)])
             else: source.rename(target)
