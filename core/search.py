@@ -3,6 +3,15 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from functools import lru_cache
+
+
+@lru_cache(maxsize=4096)
+def phonetic(text):
+    if text.isascii(): return ""
+    from pypinyin import lazy_pinyin, Style
+    return " ".join(("".join(lazy_pinyin(text)), "".join(lazy_pinyin(text, style=Style.FIRST_LETTER))))
+
 from dataclasses import dataclass
 
 from core.models import Entry
@@ -29,13 +38,18 @@ class SearchRecord:
     context: str
     note: str
     initials: str
+    kind: str
+    phonetic_name: str
+    actual_tags: str
 
     @classmethod
     def build(cls, entry: Entry, note: str = ""):
         name = normalize(entry.name)
-        return cls(name, normalize(" ".join(entry.tags)),
+        aliases = " ".join(entry.aliases)
+        return cls(name, normalize(" ".join(entry.tags) + " " + aliases),
                    normalize(f"{entry.cat_name} {entry.path} {entry.desc}"), normalize(note),
-                   "".join(word[0] for word in re.findall(r"[a-z0-9]+", name)))
+                   "".join(word[0] for word in re.findall(r"[a-z0-9]+", name)), entry.entry_type,
+                   normalize(phonetic(entry.name + " " + aliases)), normalize(" ".join(entry.tags)))
 
     def score(self, tokens: tuple[str, ...]) -> int | None:
         if not tokens:
@@ -43,6 +57,15 @@ class SearchRecord:
         total = 0
         name, tags, context, note, initials = self.name, self.tags, self.context, self.note, self.initials
         for token in tokens:
+            if token.startswith(('标签:', 'tag:')):
+                if not token.split(':', 1)[1] or token.split(':', 1)[1] not in self.actual_tags: return None
+                total += 65
+                continue
+            if token.startswith(('类型:', 'type:')):
+                value = token.split(':', 1)[1]
+                value = {'工具': 'tool', '文件': 'file', '目录': 'dir'}.get(value, value)
+                if value != self.kind: return None
+                continue
             if token == name:
                 total += 120
             elif name.startswith(token):
@@ -53,6 +76,8 @@ class SearchRecord:
                 total += 65
             elif token in context:
                 total += 40
+            elif token in self.phonetic_name:
+                total += 30
             elif token in note:
                 total += 15
             elif 2 <= len(token) <= 12 and token.isascii() and token.isalnum():

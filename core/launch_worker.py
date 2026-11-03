@@ -26,8 +26,8 @@ def execute(request_path):
             if value is None: env.pop(key,None)
             else: env[key]=value
         update('starting')
-        print('SuperGUI: ' + request['name'])
-        print('Live output is also available in SuperGUI run history.')
+        print('SuperBay: ' + request['name'])
+        print('Live output is also available in SuperBay run history.')
         print('Log: ' + str(request_path.with_suffix('.log')), flush=True)
         with request_path.with_suffix('.log').open('wb') as log:
             argv = request['argv']

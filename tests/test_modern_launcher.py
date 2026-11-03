@@ -36,6 +36,59 @@ class SearchTests(unittest.TestCase):
 
 
 class BrowserTests(unittest.TestCase):
+    def test_directory_scope_does_not_flatten_nested_files(self):
+        from core.models import Category
+        root = self.window.workspace
+        self.window.categories = [Category('parent', '父目录', root/'parent'),
+            Category('parent/child', '子目录', root/'parent/child', parent_id='parent', depth=1)]
+        direct = Entry('direct.txt', root/'parent/direct.txt', 'parent', '父目录', False)
+        deep = Entry('deep.txt', root/'parent/child/deep.txt', 'parent/child', '子目录', False)
+        self.window.entries = [direct, deep]
+        self.window.nav = 'parent'
+        items = self.window._filtered()
+        self.assertIn(direct, items); self.assertNotIn(deep, items)
+        folder = next(e for e in items if e.is_dir)
+        self.assertEqual(folder.path, root/'parent/child')
+        self.window.query = 'deep'
+        self.assertEqual(self.window._filtered(), [])
+        self.window._recursive_scope.setChecked(True)
+        self.assertEqual(self.window._filtered(), [deep])
+
+    def test_named_plan_launch_uses_its_command_and_preserves_default(self):
+        entry = self.window.entries[0]
+        old_command = entry.command
+        plan = dict(name='查看帮助', command='python main.py --help', shell_type='powershell', admin=False)
+        with patch('core.launch_history.start', return_value=(None, '已启动')) as start:
+            self.window._run_launch_plan(entry, plan)
+        launched = start.call_args.args[0]
+        self.assertEqual(launched.command, plan['command'])
+        self.assertEqual(launched.shell_type, 'powershell')
+        self.assertEqual(entry.command, old_command)
+        self.assertEqual(self.window.db.get_stats(entry.path)['runs'], 1)
+
+    def test_recent_cleanup_preserves_counts_and_filters_items(self):
+        entry = self.window.entries[0]
+        self.window.db.record_run(entry.path)
+        self.window._merge_db_meta()
+        self.window.nav = 'recent'
+        self.assertEqual(self.window._filtered(), [entry])
+        self.window._remove_recent([entry])
+        self.assertEqual(self.window._filtered(), [])
+        self.assertEqual(self.window.db.get_stats(entry.path)['runs'], 1)
+        self.window._merge_db_meta()
+        self.assertEqual(self.window._filtered(), [])
+
+    def test_side_panel_launch_page_fits_narrow_width(self):
+        entry = self.window.entries[0]
+        self.window._on_select(entry)
+        self.window._detail.show()
+        self.app.processEvents()
+        panel = self.window._detail
+        panel.resize(280, 700)
+        self.app.processEvents()
+        scroll = panel._tabs.widget(0)
+        self.assertLessEqual(scroll.widget().minimumSizeHint().width(), scroll.viewport().width())
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])

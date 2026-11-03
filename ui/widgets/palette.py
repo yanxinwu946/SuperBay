@@ -9,7 +9,6 @@ from ui.widgets.entry_view import EntryView, ENTRY_ROLE
 
 class LaunchPalette(QDialog):
     launchRequested = Signal(object)
-    recipeRequested = Signal(object, object)
     actionRequested = Signal(str, object)
 
     def __init__(self, entries, notes, icon_for, dark, parent=None, *, index=None):
@@ -17,7 +16,7 @@ class LaunchPalette(QDialog):
         self.entries, self.notes = entries, notes
         self.index = index if index is not None else SearchIndex()
         self.setWindowTitle("快速启动")
-        self.resize(720, 560)
+        self.resize(680, 420)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
@@ -25,7 +24,7 @@ class LaunchPalette(QDialog):
         title.setObjectName("ContentTitle")
         layout.addWidget(title)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("搜索工具")
+        self.search.setPlaceholderText("搜索工具、拼音或别名 · 标签:扫描 · 类型:文件")
         self.search.setClearButtonEnabled(True)
         self.search.setMinimumHeight(44)
         layout.addWidget(self.search)
@@ -34,21 +33,18 @@ class LaunchPalette(QDialog):
         self.view.launchRequested.connect(self._launch)
         self.view.actionRequested.connect(self._action)
         layout.addWidget(self.view, 1)
-        from ui.widgets.modern_combo import ModernComboBox
         actions = QHBoxLayout()
-        self.presets = ModernComboBox()
-        self.presets.setMinimumWidth(240)
-        actions.addWidget(self.presets, 1)
-        configure = QPushButton("启动配置")
-        configure.setObjectName("GhostBtn")
-        configure.clicked.connect(self._configure)
-        actions.addWidget(configure)
+        for label, action in [("启动方案", "plans"), ("浏览文件", "files"), ("带参数启动", "args"), ("打开目录", "folder")]:
+            button = QPushButton(label)
+            button.setObjectName("GhostBtn")
+            button.clicked.connect(lambda _, a=action: self._selected_action(a))
+            actions.addWidget(button)
+        actions.addStretch(1)
         runtime = QPushButton("运行环境")
         runtime.setObjectName("GhostBtn")
         runtime.clicked.connect(self._runtime)
         actions.addWidget(runtime)
         layout.addLayout(actions)
-        self.view.selectionModel().currentChanged.connect(self._sync_presets)
         self.hint = QLabel()
         self.hint.setObjectName("ContentSub")
         layout.addWidget(self.hint)
@@ -66,36 +62,27 @@ class LaunchPalette(QDialog):
             ranked = self.index.ranked(query)
         else:
             ranked = [(entry, 0) for entry in self.entries]
-        top = nsmallest(80, ranked, key=lambda pair: (-pair[1], not pair[0].pinned, -pair[0].runs, pair[0].name.casefold()))
+        if query:
+            top = nsmallest(80, ranked, key=lambda p: (-p[1], not p[0].pinned, -p[0].runs, p[0].name.casefold()))
+        else:
+            top = sorted(ranked, key=lambda p: p[0].name.casefold())
+            top.sort(key=lambda p: (p[0].last_run or "") if not p[0].recent_hidden else "", reverse=True)
+            top.sort(key=lambda p: not p[0].pinned)
+            top = top[:80]
+        self.view.setProperty("searchQuery", query)
         self.view.entries_model.replace([entry for entry, _ in top])
         if ranked:
             self.view.setCurrentIndex(self.view.model().index(0, 0))
-        self._sync_presets()
         self.hint.setText(f"{len(ranked)} 个结果" + (" · 显示前 80 项" if len(ranked) > 80 else "")
                           if ranked else "无搜索结果")
 
     def _launch(self, entry):
-        recipe = self.presets.currentData()
         self.accept()
-        if recipe:
-            self.recipeRequested.emit(entry, recipe)
-        else:
-            self.launchRequested.emit(entry)
+        self.launchRequested.emit(entry)
 
-    def _sync_presets(self, *_):
-        self.presets.clear()
-        self.presets.addItem("默认启动", None)
+    def _selected_action(self, action):
         entry = self.view.currentIndex().data(ENTRY_ROLE)
-        parent = self.parent()
-        settings = getattr(parent, "settings", None)
-        if entry and settings:
-            for recipe in settings.get("launch_presets", {}).get(str(entry.path), []):
-                self.presets.addItem(recipe["name"], recipe)
-
-    def _configure(self):
-        entry = self.view.currentIndex().data(ENTRY_ROLE)
-        if entry:
-            self._action("presets", entry)
+        if entry: self._action(action, entry)
 
     def _runtime(self):
         entry = self.view.currentIndex().data(ENTRY_ROLE)

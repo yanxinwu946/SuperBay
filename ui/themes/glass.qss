@@ -83,3 +83,36 @@ QMenu { border-radius: 12px; border-color: @glassEdge; }
 #ContentTitle { font-size: 20px; font-weight: 600; }
 #SideBar #NavButton { border-radius: 8px; }
 #SearchBar { border-radius: 10px; }
+
+
+/* One size contract; Qt owns widget geometry, QSS owns appearance. */
+QPushButton#ActionIconButton, QPushButton#TopIconBtn {
+    padding: 0; margin: 0; min-width: 32px; max-width: 32px; min-height: 32px; max-height: 32px;
+    border: 1px solid transparent; border-radius: 8px; background: transparent;
+}
+QPushButton#ActionIconButton:hover, QPushButton#TopIconBtn:hover { background: rgba(60, 181, 111, 0.12); border-color: transparent; }
+QPushButton#ActionIconButton:checked, QPushButton#TopIconBtn:checked { background: rgba(60, 181, 111, 0.16); border-color: transparent; }
+QPushButton#ActionIconButton:pressed, QPushButton#TopIconBtn:pressed { background: rgba(60, 181, 111, 0.22); border-color: transparent; }
+QPushButton#ActionIconButton:focus, QPushButton#TopIconBtn:focus { background: rgba(60, 181, 111, 0.16); border-color: transparent; }
+QPushButton#ActionIconButton:disabled, QPushButton#TopIconBtn:disabled { background: transparent; border-color: transparent; }
+QToolTip { color: @text; background: @surface; border: 1px solid @border; padding: 6px 8px; }
+#ToolbarDivider { background: @border; border: none; }
+
+/* Text action rhythm: 36px regular, 32px compact, 40px primary detail actions. */
+QPushButton#GhostBtn, QPushButton#PrimaryBtn, QPushButton#LaunchEditBtn,
+#Content QPushButton#GhostBtn, QDialog QPushButton#GhostBtn,
+QDialog QPushButton#PrimaryBtn, #SettingsDialog QPushButton#PrimaryBtn,
+#ShortcutManager QPushButton#GhostBtn, #ShortcutManager QPushButton#PrimaryBtn {
+    min-height: 20px; padding: 7px 12px; border-radius: 8px;
+    font-size: 13px; font-weight: 500;
+}
+QPushButton#GhostBtn, QPushButton#LaunchEditBtn { background: @surface; color: @text; border: 1px solid @glassEdge; }
+QPushButton#GhostBtn:hover, QPushButton#LaunchEditBtn:hover { background: @selection; border-color: @glassEdge; }
+QPushButton#GhostBtn:pressed, QPushButton#LaunchEditBtn:pressed { background: @selection; }
+QPushButton#PrimaryBtn { background: @primary; color: @primaryText; border: 1px solid transparent; }
+QPushButton#PrimaryBtn:hover { background: @primary; border-color: @glassHighlight; }
+QPushButton#MiniBtn { min-height: 20px; padding: 5px 10px; font-size: 12px; font-weight: 400; border-radius: 8px; border: 1px solid @glassEdge; background: @surface; color: @text; }
+QPushButton#MiniBtn:hover { background: @selection; }
+QPushButton#MiniBtn:pressed { background: @selection; }
+#DetailPanel QPushButton#PrimaryBtn, #DetailPanel QPushButton#GhostBtn { min-height: 22px; padding: 8px 12px; font-size: 13px; border-radius: 8px; }
+QPushButton#GhostBtn:disabled, QPushButton#MiniBtn:disabled, QPushButton#PrimaryBtn:disabled { color: @muted; background: @base; border-color: transparent; }

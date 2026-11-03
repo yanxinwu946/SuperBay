@@ -1,14 +1,15 @@
-"""Workspace, launch preset, diagnostics and portability interfaces."""
-import copy
+"""Workspace, diagnostics and portability interfaces."""
 import datetime
 from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, QSize, QRect, QRectF
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QListWidget,
-    QLineEdit,QFormLayout,QCheckBox,QTabWidget,QPlainTextEdit,QFileDialog,QInputDialog,
-    QMessageBox,QTreeWidget,QTreeWidgetItem,QAbstractItemView,QFrame,QListWidgetItem,QStyledItemDelegate,QStyle,QApplication)
-from ui.widgets.modern_combo import ModernComboBox
+    QLineEdit,QFormLayout,QTabWidget,QPlainTextEdit,QFileDialog,QInputDialog,
+    QMessageBox,QTreeWidget,QTreeWidgetItem,QAbstractItemView,QFrame,QListWidgetItem,QStyledItemDelegate,QStyle,QApplication,
+    QHeaderView)
+from ui.misc import WRAP_FLAGS, wrapped_text_height
+from ui.theme import resolve_theme
 from core import toolbox,launch_history
-from PySide6.QtGui import QColor,QFont,QPainter,QPen
+from PySide6.QtGui import QColor,QFont,QFontMetrics,QPainter,QPen
 
 
 def button(text, callback, layout):
@@ -21,13 +22,31 @@ def heading(dialog,title,subtitle):
     text=QLabel(title);text.setObjectName('ContentTitle');layout.addWidget(text)
     note=QLabel(subtitle);note.setWordWrap(True);note.setObjectName('ContentSub');layout.addWidget(note)
     from ui.native_frame import apply_native_frame
-    apply_native_frame(dialog,dialog.parent().settings.get('theme','light')=='dark')
+    settings=dialog.parent().settings
+    apply_native_frame(dialog,resolve_theme(settings.get('theme','system'))=='dark')
     return layout
 
 
 class _ShortcutDelegate(QStyledItemDelegate):
+    def _layout(self, option, value):
+        widget=option.widget or self.parent()
+        width=widget.viewport().width() if widget else 720
+        status='当前' if value['active'] else ('不可用' if not value['available'] else '')
+        status_font=QFont(option.font);status_font.setPixelSize(12)
+        status_width=QFontMetrics(status_font).horizontalAdvance(status)+20 if status else 0
+        left=52
+        title_width=max(1,width-left-status_width-24)
+        name_font=QFont(option.font);name_font.setPixelSize(13);name_font.setWeight(QFont.Weight.DemiBold)
+        name_height=wrapped_text_height(value['name'],title_width,name_font)
+        path_width=max(1,width-left-16)
+        path_font=QFont(option.font);path_font.setPixelSize(12)
+        path_height=wrapped_text_height(value['path'],path_width,path_font)
+        height=max(76,10+name_height+4+path_height+10)
+        return status,status_width,title_width,name_font,name_height,path_width,path_font,path_height,height
+
     def sizeHint(self, option, index):
-        return QSize(240, 76)
+        value=index.data(Qt.ItemDataRole.UserRole)
+        return QSize(240, self._layout(option, value)[-1] if value else 76)
 
     def paint(self, painter, option, index):
         value=index.data(Qt.ItemDataRole.UserRole)
@@ -38,6 +57,7 @@ class _ShortcutDelegate(QStyledItemDelegate):
         selected=bool(option.state & QStyle.StateFlag.State_Selected)
         hovered=bool(option.state & QStyle.StateFlag.State_MouseOver)
         rect=option.rect.adjusted(4,3,-4,-3)
+        status,status_width,title_width,name_font,name_height,path_width,path_font,path_height,_=self._layout(option,value)
         painter.save();painter.setClipRect(option.rect);painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if selected or hovered:
             painter.setPen(QPen(QColor(255,255,255,25) if dark else QColor(43,50,61,20),1) if selected else Qt.PenStyle.NoPen)
@@ -46,17 +66,15 @@ class _ShortcutDelegate(QStyledItemDelegate):
         from ui.misc import svg_icon,SVG_FOLDER
         svg_icon(SVG_FOLDER,muted.name(),20).paint(painter,QRect(rect.x()+16,rect.center().y()-10,20,20))
         left=rect.x()+52
-        status='当前' if value['active'] else ('不可用' if not value['available'] else '')
-        font=QFont(option.font);font.setPixelSize(12);painter.setFont(font)
-        status_width=painter.fontMetrics().horizontalAdvance(status)+20 if status else 0
+        status_font=QFont(option.font);status_font.setPixelSize(12);painter.setFont(status_font)
         painter.setPen(muted)
         if status:painter.drawText(QRect(rect.right()-status_width-12,rect.y()+12,status_width,22),Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignVCenter,status)
-        font.setPixelSize(13);font.setWeight(QFont.Weight.DemiBold);painter.setFont(font);painter.setPen(text)
-        title_rect=QRect(left,rect.y()+10,max(1,rect.right()-left-status_width-24),24)
-        painter.drawText(title_rect,Qt.AlignmentFlag.AlignVCenter,painter.fontMetrics().elidedText(value['name'],Qt.TextElideMode.ElideRight,title_rect.width()))
-        font.setPixelSize(12);font.setWeight(QFont.Weight.Normal);painter.setFont(font);painter.setPen(muted)
-        path_rect=QRect(left,rect.y()+36,max(1,rect.right()-left-16),22)
-        painter.drawText(path_rect,Qt.AlignmentFlag.AlignVCenter,painter.fontMetrics().elidedText(value['path'],Qt.TextElideMode.ElideMiddle,path_rect.width()))
+        painter.setFont(name_font);painter.setPen(text)
+        title_rect=QRect(left,rect.y()+10,title_width,name_height)
+        painter.drawText(title_rect,Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignTop|WRAP_FLAGS,value['name'])
+        painter.setFont(path_font);painter.setPen(muted)
+        path_rect=QRect(left,rect.y()+10+name_height+4,path_width,path_height)
+        painter.drawText(path_rect,Qt.AlignmentFlag.AlignLeft|Qt.AlignmentFlag.AlignTop|WRAP_FLAGS,value['path'])
         if option.state & QStyle.StateFlag.State_HasFocus:
             painter.setBrush(Qt.BrushStyle.NoBrush);painter.setPen(QPen(muted,1))
             painter.drawRoundedRect(QRectF(rect.adjusted(1,1,-1,-1)),11,11)
@@ -79,7 +97,8 @@ class WorkspaceDialog(QDialog):
         self.list.setMouseTracking(True);self.list.setSpacing(2)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.list.setUniformItemSizes(True)
+        self.list.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.list.setUniformItemSizes(False)
         content.addWidget(self.list,1)
         self.empty=QLabel('还没有快捷入口\n添加一个常用目录，随时切换。');self.empty.setObjectName('ShortcutEmpty');self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content.addWidget(self.empty,1);layout.addWidget(card,1)
@@ -99,6 +118,10 @@ class WorkspaceDialog(QDialog):
         if self._active_shortcut is not None:
             self.list.setCurrentRow(next(i for i,value in enumerate(self.shortcuts)
                                         if value is self._active_shortcut))
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self,'list'):
+            self.list.doItemsLayout()  # 行高依赖列表宽度，换行后重新计算
     def selection_changed(self,*_):
         enabled=self.list.currentRow()>=0
         self.path_button.setEnabled(enabled);self.rename_button.setEnabled(enabled);self.remove_button.setEnabled(enabled)
@@ -145,49 +168,6 @@ class WorkspaceDialog(QDialog):
         self.main.settings.set_presets(self.shortcuts);self.main._refresh_workspace_buttons();self.accept()
 
 
-class PresetDialog(QDialog):
-    def __init__(self,main,entry):
-        super().__init__(main);self.main=main;self.entry=entry
-        layout=heading(self,'启动配置',entry.name+' · 保存多套命令、参数与环境，在此选择配置启动；不改变默认命令')
-        self.choices=ModernComboBox();layout.addWidget(self.choices)
-        form=QFormLayout();self.name=QLineEdit();self.command=QLineEdit();self.args=QLineEdit();self.admin=QCheckBox('以管理员身份启动')
-        self.command.setPlaceholderText('留空则使用工具默认命令')
-        for title,widget in [('配置名称',self.name),('启动命令',self.command),('追加参数',self.args),('',self.admin)]:form.addRow(title,widget)
-        layout.addLayout(form)
-        self.environment=QLabel('');self.environment.setWordWrap(True);layout.addWidget(self.environment)
-        self.capture=QCheckBox('保存当前工具的环境绑定到此配置');self.capture.setChecked(True);layout.addWidget(self.capture)
-        actions=QHBoxLayout();button('新建',self.new,actions);button('保存',self.save,actions);button('删除',self.delete,actions);button('运行环境',self.runtime,actions);actions.addStretch();button('启动',self.launch,actions);layout.addLayout(actions);layout.addStretch()
-        self.choices.currentIndexChanged.connect(self.load);self.refresh()
-    def recipes(self):return self.main.settings.get('launch_presets',{}).get(str(self.entry.path),[])
-    def refresh(self):
-        self.choices.blockSignals(True);self.choices.clear();self.choices.addItem('新配置',None)
-        for recipe in self.recipes():self.choices.addItem(recipe['name'],recipe)
-        self.choices.blockSignals(False);self.load()
-    def load(self,*_):
-        value=self.choices.currentData() or {};self.name.setText(value.get('name',''));self.command.setText(value.get('command',''));self.args.setText(value.get('args',self.entry.last_args));self.admin.setChecked(value.get('admin',self.entry.admin))
-        profile=value.get('runtime_profile',self.entry.runtime_profile)
-        self.environment.setText('环境：'+('、'.join(f'{k} {v["version"]}' for k,v in profile.get('versions',{}).items()) or '继承默认'))
-    def new(self):self.choices.setCurrentIndex(0);self.load()
-    def value(self):
-        value={'name':self.name.text().strip(),'command':self.command.text().strip(),'args':self.args.text(),'admin':self.admin.isChecked()}
-        if self.capture.isChecked():value['runtime_profile']=copy.deepcopy(self.entry.runtime_profile)
-        elif self.choices.currentData() and 'runtime_profile' in self.choices.currentData():value['runtime_profile']=self.choices.currentData()['runtime_profile']
-        return value
-    def save(self):
-        value=self.value()
-        if not value['name']:QMessageBox.information(self,'配置名称','请为配置取一个名称。');return
-        recipes=list(self.recipes());old=self.choices.currentData()
-        recipes=[r for r in recipes if r['name']!=value['name'] and (not old or r['name']!=old['name'])];recipes.append(value)
-        all_presets=dict(self.main.settings.get('launch_presets',{}));all_presets[str(self.entry.path)]=recipes;self.main.settings.set('launch_presets',all_presets)
-        self.refresh();self.choices.setCurrentIndex(self.choices.findText(value['name']))
-    def delete(self):
-        selected=self.choices.currentData()
-        if not selected:return
-        values=dict(self.main.settings.get('launch_presets',{}));values[str(self.entry.path)]=[r for r in self.recipes() if r['name']!=selected['name']];self.main.settings.set('launch_presets',values);self.refresh()
-    def runtime(self):self.main._edit_runtime_profile(self.entry);self.load()
-    def launch(self):self.main._launch_recipe(self.entry,self.value());self.accept()
-
-
 class ToolCenter(QDialog):
     def __init__(self, main):
         super().__init__(main);self.main=main
@@ -195,11 +175,11 @@ class ToolCenter(QDialog):
         tabs=QTabWidget();layout.addWidget(tabs,1)
         from PySide6.QtWidgets import QWidget
         logs=QWidget();ll=QVBoxLayout(logs)
-        actions=QHBoxLayout();button('快捷入口',lambda:WorkspaceDialog(main).exec(),actions);button('刷新',self.refresh,actions);actions.addStretch();ll.addLayout(actions)
-        self.history=QTreeWidget();self.history.setObjectName('ToolHistory');self.history.setHeaderLabels(['工具','状态','开始时间']);self.history.setRootIsDecorated(False);self.history.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection);ll.addWidget(self.history)
+        actions=QHBoxLayout();button('快捷入口',lambda:WorkspaceDialog(main).exec(),actions);button('刷新',self.refresh,actions);button('清理所选',lambda:self.clear_logs(False),actions);button('清理已结束',lambda:self.clear_logs(True),actions);actions.addStretch();ll.addLayout(actions)
+        self.history=QTreeWidget();self.history.setObjectName('ToolHistory');self.history.setHeaderLabels(['工具','状态','开始时间']);self.history.setRootIsDecorated(False);self.history.setTextElideMode(Qt.TextElideMode.ElideNone);self.history.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection);ll.addWidget(self.history)
         self.output=QPlainTextEdit();self.output.setReadOnly(True);self.output.setPlaceholderText('选择运行记录查看输出');self.output.setMaximumHeight(190);ll.addWidget(self.output)
         self.history.currentItemChanged.connect(self.log);tabs.addTab(logs,'运行记录')
-        checks=QWidget();cl=QVBoxLayout(checks);self.checks=QTreeWidget();self.checks.setObjectName('ToolHealth');self.checks.setHeaderLabels(['工具 / 目录','检查结果']);self.checks.setRootIsDecorated(False);cl.addWidget(self.checks)
+        checks=QWidget();cl=QVBoxLayout(checks);self.checks=QTreeWidget();self.checks.setObjectName('ToolHealth');self.checks.setHeaderLabels(['工具 / 目录','检查结果']);self.checks.setRootIsDecorated(False);self.checks.setWordWrap(True);self.checks.setTextElideMode(Qt.TextElideMode.ElideNone);self.checks.header().setSectionResizeMode(0,QHeaderView.ResizeMode.ResizeToContents);self.checks.header().setSectionResizeMode(1,QHeaderView.ResizeMode.Stretch);cl.addWidget(self.checks)
         ca=QHBoxLayout();button('重新检查',self.check,ca);button('修复所选工具',self.repair,ca);button('绑定运行环境',self.runtime,ca);cl.addLayout(ca);tabs.addTab(checks,'健康检查')
         backup=QWidget();bl=QVBoxLayout(backup);note=QLabel('备份包含目录设置、标签、启动命令、参数配置、环境绑定和使用记录。\n工具程序与运行日志不打包。导入前会自动备份当前配置。');note.setWordWrap(True);bl.addWidget(note)
         form=QFormLayout();self.old=QLineEdit();self.new=QLineEdit();self.old.setPlaceholderText('可选：原电脑上的目录');self.new.setPlaceholderText('可选：本机对应目录');form.addRow('原目录',self.old);form.addRow('新目录',self.new);bl.addLayout(form)
@@ -218,9 +198,25 @@ class ToolCenter(QDialog):
             self.history.resizeColumnToContents(i)
             self.history.setColumnWidth(i,max(self.history.columnWidth(i),[180,150,160][i]))
         self.log()
+    def clear_logs(self, all_finished):
+        item = self.history.currentItem()
+        if not all_finished and item is None: return
+        text = '清理全部已结束的启动记录及其日志？' if all_finished else '清理所选启动记录及其日志？'
+        if QMessageBox.question(self, '清理运行记录', text + '\n正在运行、启动中和状态未知的记录会保留。') != QMessageBox.StandardButton.Yes: return
+        ids = None if all_finished else {item.data(0, Qt.ItemDataRole.UserRole)['id']}
+        try:
+            removed, skipped = launch_history.clear_history(self.main.app_dir/'config/launches', ids)
+            self.output.clear()
+            self.refresh()
+            QMessageBox.information(self, '清理完成', f'已清理 {removed} 条，保留 {skipped} 条活动或状态未知记录。')
+        except (OSError, ValueError) as error:
+            self.refresh()
+            QMessageBox.warning(self, '清理未完成', str(error))
+
     def log(self,*_):
         item=self.history.currentItem()
-        if not item:return
+        if not item:
+            self.output.clear();return
         record=item.data(0,Qt.ItemDataRole.UserRole);path=self.main.app_dir/'config/launches'/(record['id']+'.log')
         content=''
         if path.exists():
@@ -240,8 +236,8 @@ class ToolCenter(QDialog):
             if path not in entries and self.main.db._in_workspace(self.main.workspace,path) and not Path(path).exists():
                 entry=Entry(Path(path).name,Path(path),'','',not bool(Path(path).suffix));entry.command=meta['command'];entry.runtime_profile=meta['runtime_profile'];entries[path]=entry
         for entry in entries.values():
-            issues=toolbox.health(entry)
-            item=QTreeWidgetItem([entry.name,'；'.join(issues) if issues else '可用']);item.setData(0,Qt.ItemDataRole.UserRole,entry);item.setToolTip(0,str(entry.path));self.checks.addTopLevelItem(item)
+            issues=toolbox.health(entry);result='；'.join(issues) if issues else '可用'
+            item=QTreeWidgetItem([entry.name,result]);item.setData(0,Qt.ItemDataRole.UserRole,entry);item.setToolTip(0,str(entry.path));item.setToolTip(1,result);self.checks.addTopLevelItem(item)
         self.checks.resizeColumnToContents(0)
     def repair(self):
         item=self.checks.currentItem();entry=item.data(0,Qt.ItemDataRole.UserRole) if item else None
@@ -256,7 +252,7 @@ class ToolCenter(QDialog):
         item=self.checks.currentItem();entry=item.data(0,Qt.ItemDataRole.UserRole) if item else None
         if entry:self.main._edit_runtime_profile(entry);self.check()
     def export(self):
-        path,_=QFileDialog.getSaveFileName(self,'导出备份','SuperGUI-backup.zip','备份 (*.zip)')
+        path,_=QFileDialog.getSaveFileName(self,'导出备份','SuperBay-backup.zip','备份 (*.zip)')
         if path:
             try:toolbox.export_backup(path,self.main.settings,self.main.db);QMessageBox.information(self,'备份完成',path)
             except Exception as error:QMessageBox.warning(self,'备份失败',str(error))
@@ -271,6 +267,6 @@ class ToolCenter(QDialog):
             toolbox.import_backup(path,self.main.settings,self.main.db,self.old.text().strip(),self.new.text().strip())
             root=self.main.settings.get('workspace_root')
             if root:self.main.workspace=Path(root)
-            self.main._apply_theme(self.main.settings.get('theme','light'));self.main._set_view(self.main.settings.get('view','grid'));self.main._refresh_workspace_buttons();self.main.reload();self.check()
+            self.main._apply_theme(self.main.settings.get('theme','system'));self.main._set_view(self.main.settings.get('view','grid'));self.main._refresh_workspace_buttons();self.main.reload();self.check()
             QMessageBox.information(self,'导入完成','已导入配置，原配置已自动备份。快捷键与窗口位置重启后生效。')
         except Exception as error:QMessageBox.warning(self,'导入失败',str(error))

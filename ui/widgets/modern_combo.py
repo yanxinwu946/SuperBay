@@ -27,13 +27,9 @@ class _OptionDelegate(QStyledItemDelegate):
         font.setWeight(QFont.Weight.Normal)
         painter.setFont(font)
         painter.setPen(QColor('#e6e9ee' if dark else '#2b323d'))
-        text_rect = rect.adjusted(10, 0, -30, 0)
+        text_rect = rect.adjusted(10, 0, -10, 0)
         text = QFontMetrics(font).elidedText(str(index.data() or ''), Qt.TextElideMode.ElideRight, text_rect.width())
         painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
-        if current:
-            painter.setPen(QColor('#80c99a' if dark else '#27834e'))
-            painter.drawText(rect.adjusted(0, 0, -10, 0),
-                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, '✓')
         painter.restore()
 
 
@@ -57,6 +53,7 @@ class ModernComboBox(QComboBox):
         view.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.setMaxVisibleItems(10)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.currentTextChanged.connect(self.setToolTip)
         # Disable Qt's platform menu popup, including its top/bottom scrollers.
         self.setStyleSheet('QComboBox { combobox-popup: 0; }')
 

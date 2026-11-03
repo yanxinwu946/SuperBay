@@ -43,7 +43,10 @@ class Entry:
     admin: bool = False           # 总是以管理员身份启动
     runs: int = 0
     last_run: str = ""
+    recent_hidden: bool = False
     runtime_profile: dict = field(default_factory=dict)  # per-tool Scoop root and pinned versions
+    aliases: list[str] = field(default_factory=list)
+    launch_plans: list[dict] = field(default_factory=list)
 
 
 @dataclass

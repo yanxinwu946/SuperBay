@@ -6,6 +6,15 @@ import unittest
 from core.scanner import scan
 
 class NestedFolderTests(unittest.TestCase):
+    def test_project_at_workspace_root_remains_one_tool(self):
+        self.file('node-app/package.json')
+        self.file('node-app/main.js')
+        self.file('node-app/src/internal.js')
+        self.file('node-app/node_modules/dep/index.js')
+        categories = scan(self.root, max_depth=4)
+        entries = [entry for category in categories for entry in category.entries]
+        self.assertEqual([entry.path for entry in entries], [self.root/'node-app'])
+        self.assertEqual(entries[0].entry_type, 'tool')
     def setUp(self):self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
     def tearDown(self):self.temp.cleanup()
     def file(self,relative):

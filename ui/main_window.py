@@ -19,6 +19,7 @@ from PySide6.QtNetwork import QLocalServer
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
+    QCheckBox,
     QFileDialog,
     QFileIconProvider,
     QFrame,
@@ -51,7 +52,6 @@ from config.settings import Settings
 from ui.misc import (
     ICON_COLOR,
     SVG_GRID,
-    SVG_FOLDER,
     SVG_LIST,
     SVG_MOON,
     SVG_PANEL,
@@ -63,13 +63,13 @@ from ui.misc import (
     svg_icon,
 )
 from ui.widgets.detail import CommandDialog, DetailPanel
-from ui.theme import apply_theme
+from ui.theme import apply_theme, resolve_theme
 from ui.widgets.settings_dialog import SettingsDialog
 from ui.widgets.workspace_sidebar import WorkspaceSideBar as SideBar
 
 log = logging.getLogger(__name__)
 
-WINDOW_TITLE = "SuperGUI"
+WINDOW_TITLE = "SuperBay"
 NOTE_CACHE_BYTES = 8192          # 笔记搜索缓存只取前 8KB，够命中又不拖慢扫描
 NAV_TITLES = {"all": "全部", "star": "固定", "recent": "最近"}
 DEFAULT_WINDOW_SIZE = {"w": 1440, "h": 860}
@@ -131,6 +131,7 @@ class _ScanWorker(QObject):
 class MainWindow(QMainWindow):
     def __init__(self, app_dir: Path, settings: Settings):
         super().__init__()
+        self.setAcceptDrops(True)
         self.app_dir = Path(app_dir)
         self.settings = settings  # 全局唯一 Settings 实例，由 main.py 创建并共享
         from ui.native_frame import prepare_backdrop
@@ -144,6 +145,8 @@ class MainWindow(QMainWindow):
         self.entries: list[Entry] = []
         self._search_index = SearchIndex()
         self.nav = "all"
+        self._nav_back = []
+        self._nav_forward = []
         self.tag: str | None = None
         self.query = ""
         self.kind = "all"
@@ -180,6 +183,10 @@ class MainWindow(QMainWindow):
         self._launch_timer = QTimer(self, interval=1500)
         self._launch_timer.timeout.connect(self._poll_launches)
         self._launch_timer.start()
+        self._applied_theme = resolve_theme(self.settings.get("theme", "system"))
+        self._theme_timer = QTimer(self, interval=2000)
+        self._theme_timer.timeout.connect(self._sync_system_theme)
+        self._theme_timer.start()
         self._build_ipc()
         self._build_watcher()
 
@@ -210,12 +217,12 @@ class MainWindow(QMainWindow):
     def _build_topbar(self) -> None:
         bar = QFrame()
         bar.setObjectName("TopBar")
-        bar.setFixedHeight(48)
+        bar.setFixedHeight(56)
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(14, 0, 14, 0)
-        lay.setSpacing(12)
+        lay.setSpacing(8)
 
-        brand = QLabel("SuperGUI")
+        brand = QLabel("SuperBay")
         brand.setObjectName("Brand")
         lay.addWidget(brand)
 
@@ -223,7 +230,7 @@ class MainWindow(QMainWindow):
         self._workspace_selector.setObjectName("WorkspaceSelector")
         self._workspace_selector.setFixedHeight(36)
         self._workspace_selector.setMinimumWidth(144)
-        self._workspace_selector.setMaximumWidth(220)
+        self._workspace_selector.setMaximumWidth(420)
         self._workspace_selector.setToolTip("目录快捷入口 · 一次打开一个目录")
         self._workspace_selector.currentIndexChanged.connect(self._switch_workspace_by_index)
         lay.addWidget(self._workspace_selector)
@@ -256,11 +263,10 @@ class MainWindow(QMainWindow):
         lay.addWidget(self._grid_btn)
         lay.addWidget(self._list_btn)
 
-        cur_theme = self.settings.get("theme", "light")
+        cur_theme = resolve_theme(self.settings.get("theme", "system"))
         self._theme_btn = self._top_icon_btn(
-            SVG_SUN if cur_theme == "dark" else SVG_MOON, "切换主题")
-        self._theme_btn.clicked.connect(self._toggle_theme)
-        lay.addWidget(self._theme_btn)
+            SVG_SUN if cur_theme == "dark" else SVG_MOON, "外观主题")
+        self._theme_btn.clicked.connect(self._show_theme_menu)
 
         self._panel_btn = self._top_icon_btn(SVG_PANEL, "折叠/展开详情面板 (Ctrl+B)",
                                              checkable=True)
@@ -268,9 +274,20 @@ class MainWindow(QMainWindow):
         self._panel_btn.clicked.connect(self._toggle_panel)
         lay.addWidget(self._panel_btn)
 
+        organize = QPushButton("整理工具")
+        organize.setObjectName("GhostBtn")
+        organize.clicked.connect(self._manage_files)
+        lay.insertWidget(4, organize)
+
         refresh_btn = self._top_icon_btn(SVG_REFRESH, "重新扫描 (F5)")
         refresh_btn.clicked.connect(self.reload)
         lay.addWidget(refresh_btn)
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.VLine)
+        separator.setFixedHeight(20)
+        separator.setObjectName('ToolbarDivider')
+        lay.addWidget(separator)
+        lay.addWidget(self._theme_btn)
 
         set_btn = self._top_icon_btn(SVG_SETTINGS, "设置")
         set_btn.clicked.connect(self._show_settings)
@@ -288,7 +305,7 @@ class MainWindow(QMainWindow):
         self._search = QLineEdit()
         self._search.setObjectName("SearchBar")
         self._search.setPlaceholderText("搜索   Ctrl+K")
-        self._search.setToolTip("搜索名称、标签或笔记；Enter 启动，↓ 选择。")
+        self._search.setToolTip("支持拼音、别名、标签:扫描、类型:文件；Enter 启动，↓ 选择。")
         self._search.setClearButtonEnabled(True)
         self._search.installEventFilter(self)
         self._search.addAction(svg_icon(SVG_SEARCH, ICON_COLOR),
@@ -302,11 +319,13 @@ class MainWindow(QMainWindow):
     def _top_icon_btn(self, svg: str, tooltip: str, checkable: bool = False) -> QPushButton:
         btn = QPushButton()
         btn.setObjectName("TopIconBtn")
+        btn.setProperty("actionIcon", True)
+        btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         btn.setIcon(svg_icon(svg, ICON_COLOR))
         btn.setToolTip(tooltip)
         btn.setCheckable(checkable)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setFixedSize(33, 33)
+        btn.setFixedSize(34, 34)
         return btn
 
     def _build_central(self) -> None:
@@ -333,14 +352,18 @@ class MainWindow(QMainWindow):
         self._detail.setMaximumWidth(640)
         self._detail.setVisible(self._panel_btn.isChecked())
         self._detail.launchRequested.connect(lambda e: self._launch(e, False))
-        self._detail.openDirRequested.connect(lambda e: launcher.open_in_explorer(e.path))
+        self._detail.openDirRequested.connect(lambda e: self._open_entry_folder(e))
+        self._detail.aliasesRequested.connect(self._edit_aliases)
+        self._detail.planRunRequested.connect(self._run_launch_plan)
+        self._detail.plansRequested.connect(self._launch_plans)
+        self._detail.filesRequested.connect(self._browse_files)
         self._detail.pinToggled.connect(self._toggle_pin)
         self._detail.commandEdited.connect(self._edit_command)
         self._detail.tagsEdited.connect(self._edit_tags)
         self._detail.noteSaved.connect(self._on_note_saved)
         self._detail.runtimeRequested.connect(self._edit_runtime_profile)
         self._detail.detectRequested.connect(self._detect_entry)
-        self._detail.presetsRequested.connect(self._edit_presets)
+        self._detail.shortcutRequested.connect(self._create_desktop_shortcut)
         body.addWidget(self._detail)
 
         body.setStretchFactor(0, 0)
@@ -353,6 +376,42 @@ class MainWindow(QMainWindow):
         root.addWidget(body, 1)
         QTimer.singleShot(0, lambda: self._restore_panel_widths(initial=True))
         self.setCentralWidget(central)
+        self._apply_action_icons()
+        from ui.widgets.action_glow import ActionGlow
+        for button in self.findChildren(QPushButton):
+            if button.property('actionIcon'):
+                button._action_glow = ActionGlow(button)
+
+    def _apply_action_icons(self):
+        paths = {
+            '←': 'M13 8H3m4-4L3 8l4 4',
+            '→': 'M3 8h10M9 4l4 4-4 4',
+            '↑': 'M8 13V3M4 7l4-4 4 4',
+            '复制路径': 'M6 5V2h7v9h-3M3 5h7v9H3Z',
+            '快速启动': 'M9 1 3 9h4l-1 6 7-9H9Z',
+            '运行环境': 'M2 3h12v10H2ZM4 6l2 2-2 2m4 0h3',
+            '工具管理': 'M2 5h12v9H2ZM5 5V2h6v3M2 8h12M7 8v2h2V8',
+            '整理工具': 'M2 4h5l2 2h5v8H2ZM5 10h6m-3-2v4',
+            '清空最近': 'M3 4h10M6 4V2h4v2M4 4l1 10h6l1-10M7 7v4m2-4v4',
+            '清除筛选': 'M2 3h12l-5 6v4l-2 1V9ZM10 10l4 4m0-4-4 4',
+        }
+        for button in self.findChildren(QPushButton):
+            label = button.text()
+            path = paths.get(label)
+            if path is None: continue
+            svg = '<svg viewBox="0 0 16 16" fill="none"><path d="' + path + '" stroke="{c}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+            button.setIcon(svg_icon(svg, ICON_COLOR))
+            button.setAccessibleName(button.toolTip() or label)
+            if not button.toolTip(): button.setToolTip(label)
+            button.setText('')
+            button.setObjectName('ActionIconButton')
+            button.setProperty('actionIcon', True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            button.setAutoDefault(False)
+            button.setFixedSize(34, 34)
+
+
 
     def _make_content(self) -> QFrame:
         """中间内容区：标题行 + 统计卡片 + 卡片滚动区。"""
@@ -362,6 +421,36 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(16, 16, 16, 12)
         lay.setSpacing(10)
 
+        navigation = QHBoxLayout()
+        navigation.setSpacing(8)
+        self._back_btn = QPushButton('←')
+        self._forward_btn = QPushButton('→')
+        self._up_btn = QPushButton('↑')
+        for button, tip, slot in ((self._back_btn, '后退 · Alt+Left', lambda: self._history_move(False)),
+                                  (self._forward_btn, '前进 · Alt+Right', lambda: self._history_move(True)),
+                                  (self._up_btn, '上一级 · Alt+Up', self._navigate_up)):
+            button.setObjectName('GhostBtn')
+            button.setFixedSize(28, 28)
+            button.setFlat(True)
+            button.setToolTip(tip)
+            button.clicked.connect(slot)
+            navigation.addWidget(button)
+        self._breadcrumbs = QLabel()
+        self._breadcrumbs.setObjectName('ContentSub')
+        self._breadcrumbs.setWordWrap(False)
+        self._breadcrumbs.setMinimumWidth(0)
+        self._breadcrumbs.setTextFormat(Qt.TextFormat.PlainText)
+        self._breadcrumbs.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        navigation.addWidget(self._breadcrumbs, 1)
+        self._copy_location = QPushButton('复制路径')
+        self._copy_location.setObjectName('MiniBtn')
+        self._copy_location.setFixedHeight(28)
+        self._copy_location.clicked.connect(self._copy_current_location)
+        navigation.addWidget(self._copy_location)
+        lay.addLayout(navigation)
+        QShortcut(QKeySequence('Alt+Left'), self, activated=lambda: self._history_move(False))
+        QShortcut(QKeySequence('Alt+Right'), self, activated=lambda: self._history_move(True))
+        QShortcut(QKeySequence('Alt+Up'), self, activated=self._navigate_up)
         header = QHBoxLayout()
         self._title = QLabel("全部")
         self._title.setObjectName("ContentTitle")
@@ -370,7 +459,7 @@ class MainWindow(QMainWindow):
         header.addWidget(self._title)
         header.addWidget(self._count_lbl)
         header.addStretch(1)
-        quick = QPushButton("快速启动  Ctrl+P")
+        quick = QPushButton("快速启动")
         self._quick_start = quick
         quick.setObjectName("GhostBtn")
         quick.clicked.connect(self._open_palette)
@@ -382,19 +471,36 @@ class MainWindow(QMainWindow):
         self._kind_filter.currentIndexChanged.connect(self._filter_changed)
         filters.addWidget(self._kind_filter)
         self._sort_filter = QComboBox()
-        for label, value in (("智能排序", "smart"), ("名称 A → Z", "name"), ("最常使用", "runs"), ("最近启动", "recent")):
+        for label, value in (("智能排序", "smart"), ("名称 A → Z", "name"), ("最常使用", "runs"), ("最近启动", "recent"), ("名称 Z → A", "name_desc"), ("使用次数最少", "runs_asc"), ("类型", "type"), ("最近修改", "modified"), ("最早修改", "modified_asc"), ("文件最大", "size"), ("文件最小", "size_asc")):
             self._sort_filter.addItem(label, value)
         self._sort_filter.setCurrentIndex(max(0, self._sort_filter.findData(self.settings.get("sort_order", "smart"))))
         self.sort_order = self._sort_filter.currentData()
         self._sort_filter.currentIndexChanged.connect(self._filter_changed)
         filters.addWidget(self._sort_filter)
         filters.addWidget(quick)
+        self._clear_recent_btn = QPushButton("清空最近")
+        self._clear_recent_btn.setObjectName("GhostBtn")
+        self._clear_recent_btn.clicked.connect(self._clear_recent)
+        self._clear_recent_btn.hide()
         lay.addLayout(header)
+        scope_row = QHBoxLayout()
+        self._scope_hint = QLabel()
+        self._scope_hint.setObjectName("ContentSub")
+        self._scope_hint.setWordWrap(True)
+        self._scope_hint.hide()
+        self._recursive_scope = QCheckBox("包含子目录")
+        self._recursive_scope.setToolTip("关闭时只显示、搜索当前目录的直接内容")
+        self._recursive_scope.toggled.connect(lambda _: self._rebuild_grid())
+        header.insertWidget(3, self._recursive_scope)
         self._filter_reset = QPushButton("清除筛选")
         self._filter_reset.setObjectName("MiniBtn")
         self._filter_reset.clicked.connect(self._reset_filters)
         self._filter_reset.hide()
-        lay.addWidget(self._filter_reset, 0, Qt.AlignmentFlag.AlignLeft)
+        cleanup = QHBoxLayout()
+        cleanup.addWidget(self._filter_reset)
+        cleanup.addWidget(self._clear_recent_btn)
+        cleanup.addStretch(1)
+        lay.addLayout(cleanup)
 
         from ui.widgets.overview import Overview
         self._overview = Overview()
@@ -402,7 +508,9 @@ class MainWindow(QMainWindow):
 
         self._list_header = EntryHeader()
         lay.addWidget(self._list_header)
-        self._browser = EntryView(self._icon_for, lambda: self.settings.get("theme") == "dark")
+        self._browser = EntryView(
+            self._icon_for,
+            lambda: QApplication.instance().property("superguiTheme") == "dark")
         self._browser.entrySelected.connect(self._on_select)
         self._browser.launchRequested.connect(lambda e: self._launch(e, False))
         self._browser.contextRequested.connect(self._show_context)
@@ -428,6 +536,7 @@ class MainWindow(QMainWindow):
         self._status_ok.setObjectName("StatusOk")
         self._status_path = QLabel(str(self.workspace))
         self._status_path.setObjectName("StatusText")
+        self._status_path.setToolTip(str(self.workspace))
         lay.addWidget(self._status_ok)
         lay.addWidget(self._status_path)
         lay.addStretch(1)
@@ -437,7 +546,7 @@ class MainWindow(QMainWindow):
     def _build_tray(self) -> None:
         self._tray = QSystemTrayIcon(self)
         self._tray.setIcon(make_logo_icon(64))
-        self._tray.setToolTip(f"SuperGUI v{__version__}")
+        self._tray.setToolTip(f"SuperBay v{__version__}")
         menu = QMenu()
         menu.addAction("显示主界面", self._show_from_tray)
         menu.addAction("重新扫描", self.reload)
@@ -449,7 +558,6 @@ class MainWindow(QMainWindow):
 
     def _build_shortcuts(self) -> None:
         QShortcut(QKeySequence("Ctrl+K"), self, activated=self._focus_search)
-        QShortcut(QKeySequence("Ctrl+P"), self, activated=self._open_palette)
         QShortcut(QKeySequence("Ctrl+Shift+F"), self, activated=self._reset_filters)
         QShortcut(QKeySequence("Ctrl+B"), self, activated=self._toggle_panel)
         QShortcut(QKeySequence("F5"), self, activated=self.reload)
@@ -476,7 +584,8 @@ class MainWindow(QMainWindow):
 
     def _build_watcher(self) -> None:
         """工作区目录监听：条目增删/改名后去抖 1s 自动重扫，免得解压工具包时刷爆。"""
-        self._watcher = QFileSystemWatcher(self)
+        from core.directory_watcher import DirectoryWatcher
+        self._watcher = DirectoryWatcher(self)
         self._watch_timer = QTimer(self, singleShot=True, interval=1000)
         self._watch_timer.timeout.connect(self._auto_reload)
         self._watcher.directoryChanged.connect(lambda _p: self._watch_timer.start())
@@ -578,7 +687,9 @@ class MainWindow(QMainWindow):
         self._set_status("就绪")
         from core.toolbox import workspace_roots
         roots = workspace_roots(self.settings, self.workspace)
-        self._status_path.setText(str(self.workspace) if len(roots) == 1 else f"{len(roots)} 个目录")
+        status_path = str(self.workspace) if len(roots) == 1 else f"{len(roots)} 个目录"
+        self._status_path.setText(status_path)
+        self._status_path.setToolTip(status_path)
         self._refresh_watcher()
 
         keep = self._restore_path
@@ -605,6 +716,7 @@ class MainWindow(QMainWindow):
 
     def _merge_db_meta(self) -> None:
         """把 db 里的元数据（固定/标签/自定义命令/参数记忆/统计）按路径合进扫描结果。"""
+        self._directory_entry_cache = {}
         metas = self.db.all_meta()
         stats = self.db.all_stats()
         for e in self.entries:
@@ -614,8 +726,10 @@ class MainWindow(QMainWindow):
                 e.command, e.shell_type = m["command"], m["shell_type"]
                 e.last_args, e.admin = m["last_args"], m["admin"]
                 e.runtime_profile = m["runtime_profile"]
+                e.aliases, e.launch_plans = m["aliases"], m["launch_plans"]
             if s := stats.get(key):
                 e.runs, e.last_run = s["runs"], s["last_run"]
+                e.recent_hidden = s.get("recent_hidden", False)
 
     def _prune_stale_meta(self) -> None:
         """清理已消失条目的元数据（仅在当前工作区内、父目录仍在时删）。"""
@@ -648,7 +762,7 @@ class MainWindow(QMainWindow):
         self._sidebar.rebuild(
             cats, len(entries),
             star_count=sum(1 for e in entries if e.pinned),
-            recent_count=sum(1 for e in entries if e.runs > 0),
+            recent_count=sum(1 for e in entries if e.runs > 0 and not e.recent_hidden),
             tags=sorted({t for e in entries for t in e.tags})
                  if self.settings.get("show_tags", False) else [])
         # A long title must wrap inside the sidebar, including scrollbar space.
@@ -670,13 +784,28 @@ class MainWindow(QMainWindow):
         if self.nav == "star":
             items = [e for e in items if e.pinned]
         elif self.nav == "recent":
-            items = [e for e in items if e.runs > 0]
+            items = [e for e in items if e.runs > 0 and not e.recent_hidden]
         elif self.nav != "all":
-            items = [e for e in items if e.cat_id == self.nav or e.cat_id.startswith(self.nav + "/")]
+            recursive = self._recursive_scope.isChecked()
+            items = [e for e in items if e.cat_id == self.nav or (recursive and e.cat_id.startswith(self.nav + "/"))]
+            if not recursive:
+                for category in self.categories:
+                    if category.parent_id == self.nav:
+                        cache = getattr(self, '_directory_entry_cache', None)
+                        if cache is None: self._directory_entry_cache = cache = {}
+                        folder = cache.get(category.path)
+                        if folder is None:
+                            folder = Entry(category.path.name, category.path, self.nav, category.name, True, entry_type="dir")
+                            folder.desc = "子目录 · 打开查看此目录内容"
+                            cache[category.path] = folder
+                        items.append(folder)
         if self.tag:
             items = [e for e in items if self.tag in e.tags]
         if self.kind != "all":
             items = [e for e in items if e.entry_type == self.kind]
+        self._search_index.ensure(self.entries, self._note_cache)
+        for entry in items:
+            if id(entry) not in self._search_index.records: self._search_index.update(entry)
         ranks = {}
         if self.query:
             self._search_index.ensure(self.entries, self._note_cache)
@@ -687,6 +816,22 @@ class MainWindow(QMainWindow):
             return sorted(items, key=lambda e: (e.last_run, e.name.casefold()), reverse=True)
         if self.sort_order == "runs":
             return sorted(items, key=lambda e: (-e.runs, e.name.casefold()))
+        if self.sort_order == "name_desc":
+            return sorted(items, key=lambda e: e.name.casefold(), reverse=True)
+        if self.sort_order == "runs_asc":
+            return sorted(items, key=lambda e: (e.runs, e.name.casefold()))
+        if self.sort_order == "type":
+            return sorted(items, key=lambda e: (not e.is_dir, e.path.suffix.casefold(), e.name.casefold()))
+        if self.sort_order in {"modified", "modified_asc", "size", "size_asc"}:
+            def file_value(entry):
+                try:
+                    info = entry.path.stat()
+                    value = info.st_mtime_ns if self.sort_order.startswith('modified') else (0 if entry.is_dir else info.st_size)
+                except OSError:
+                    value = 0
+                return value
+            ordered = sorted(items, key=lambda e: e.name.casefold())
+            return sorted(ordered, key=file_value, reverse=not self.sort_order.endswith('_asc'))
         if self.sort_order == "name":
             return sorted(items, key=lambda e: e.name.casefold())
         return sorted(items, key=lambda e: (-ranks.get(id(e), 0), not e.pinned, -e.runs, e.name.casefold()))
@@ -713,10 +858,11 @@ class MainWindow(QMainWindow):
             "args": lambda: self._launch_with_args(entry),
             "pin": lambda: self._toggle_pin(entry, not entry.pinned),
             "copy": lambda: QGuiApplication.clipboard().setText(str(entry.path)),
-            "folder": lambda: launcher.open_in_explorer(entry.path),
+            "folder": lambda: self._open_entry_folder(entry),
             "command": lambda: self._popup_command(entry),
             "runtime": lambda: self._edit_runtime_profile(entry),
-            "presets": lambda: self._edit_presets(entry),
+            "plans": lambda: self._launch_plans(entry),
+            "files": lambda: self._browse_files(entry),
         }
         if action in actions:
             actions[action]()
@@ -741,16 +887,29 @@ class MainWindow(QMainWindow):
 
     def _rebuild_grid(self) -> None:
         items = self._filtered()
+        category = next((c for c in self.categories if c.cat_id == self.nav), None)
+        self._update_navigation()
+        self._recursive_scope.setVisible(category is not None)
+        if category:
+            scope = "当前目录及子目录" if self._recursive_scope.isChecked() else "仅当前目录"
+            self._scope_hint.setText(f"{scope} · {category.path}")
+        else:
+            self._scope_hint.setText("跨目录汇总 · 当前工作区的全部条目" if self.nav == "all" else "当前工作区 · " + self._current_title())
+        self._clear_recent_btn.setVisible(self.nav == "recent")
         self._overview.set_entries(items)
         self._overview.setVisible(self.view == "grid" and bool(items))
         self._filter_reset.setVisible(bool(self.query or self.tag or self.nav != "all" or self.kind != "all"))
-        self._title.setText(self._current_title())
+        title = self._current_title()
+        self._title.setText(title)
+        self._title.setToolTip(title)
         self._count_lbl.setText(f"{len(items)} 项" if len(items) == len(self.entries)
                                 else f"{len(items)} / {len(self.entries)}")
 
         self._list_header.setVisible(self.view == "list" and bool(items))
         self._browser.set_grid(self.view == "grid")
-        selection_guard = QSignalBlocker(self._browser)
+        _selection_guard = QSignalBlocker(self._browser)
+        self._browser.setProperty("searchQuery", self.query)
+        self._browser.viewport().update()
         if not self._browser.entries_model.replace(items):
             self._browser.viewport().update()
         self._browser.setVisible(bool(items))
@@ -764,20 +923,93 @@ class MainWindow(QMainWindow):
                     self._browser.setCurrentIndex(self._browser.model().index(row, 0))
                     break
 
+    def activate_launcher(self) -> None:
+        # A global invocation always brings the workspace forward.
+        self._show_from_tray()
+        self._focus_search()
+
     def _open_palette(self) -> None:
+        if getattr(self, "_palette", None) is not None:
+            self._palette.reject()
+            return
         from ui.widgets.palette import LaunchPalette
-        dialog = LaunchPalette(self.entries, self._note_cache, self._icon_for,
-                               lambda: self.settings.get("theme") == "dark", self, index=self._search_index)
+        dialog = LaunchPalette(
+            self.entries, self._note_cache, self._icon_for,
+            lambda: QApplication.instance().property("superguiTheme") == "dark",
+            self, index=self._search_index)
         dialog.launchRequested.connect(lambda e: self._launch(e, False))
         dialog.actionRequested.connect(self._entry_action)
-        dialog.recipeRequested.connect(self._launch_recipe)
-        dialog.exec()
+        self._palette = dialog
+        # Place explicitly: Qt can place dialogs of hidden parents at (0, 0).
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is not None:
+            bounds = screen.availableGeometry()
+            dialog.resize(min(760, max(320, bounds.width() - 48)), min(500, max(240, bounds.height() - 48)))
+            dialog.ensurePolished()
+            center = self.frameGeometry().center() if self.isVisible() and not self.isMinimized() else bounds.center()
+            x = max(bounds.left(), min(center.x() - dialog.width() // 2, bounds.right() - dialog.width() + 1))
+            y = max(bounds.top(), min(center.y() - dialog.height() // 2, bounds.bottom() - dialog.height() + 1))
+            dialog.move(x, y)
+        try:
+            dialog.exec()
+        finally:
+            self._palette = None
 
     # ── 交互 ──
-    def _on_nav(self, key: str) -> None:
+    def _update_navigation(self):
+        category = next((c for c in self.categories if c.cat_id == self.nav), None)
+        chain = []
+        current = category
+        seen = set()
+        while current and current.cat_id not in seen:
+            seen.add(current.cat_id)
+            chain.append(current)
+            current = next((c for c in self.categories if c.cat_id == current.parent_id), None)
+        location = str(category.path if category else self.workspace)
+        self._breadcrumbs.setText(location.replace('\\', ' / '))
+        self._breadcrumbs.setToolTip(str(category.path if category else self.workspace))
+        valid = {'all', 'star', 'recent', *(c.cat_id for c in self.categories)}
+        self._nav_back[:] = [key for key in self._nav_back if key in valid]
+        self._nav_forward[:] = [key for key in self._nav_forward if key in valid]
+        self._back_btn.setEnabled(bool(self._nav_back))
+        self._forward_btn.setEnabled(bool(self._nav_forward))
+        self._up_btn.setEnabled(category is not None)
+
+    def _copy_current_location(self):
+        category = next((c for c in self.categories if c.cat_id == self.nav), None)
+        QApplication.clipboard().setText(str(category.path if category else self.workspace))
+        self._set_status("当前目录路径已复制")
+
+    def _navigate_up(self):
+        category = next((c for c in self.categories if c.cat_id == self.nav), None)
+        if category: self._on_nav(category.parent_id or 'all')
+
+    def _history_move(self, forward):
+        source = self._nav_forward if forward else self._nav_back
+        target = self._nav_back if forward else self._nav_forward
+        if not source or not self._detail.confirm_leave(): return
+        target.append(self.nav)
+        self._set_navigation(source.pop())
+
+    def _set_navigation(self, key):
+        self._search_timer.stop()
+        self._search.clear()
+        self.query = ''
         self.nav = key
-        self.tag = None  # 导航和标签互斥，切导航时清掉标签筛选
+        self.tag = None
+        self._sidebar.set_current(key)
         self._rebuild_grid()
+
+    def _on_nav(self, key: str) -> None:
+        from urllib.parse import unquote
+        key = unquote(key)
+        if key == self.nav and not self.tag: return
+        if not self._detail.confirm_leave():
+            self._sidebar.set_current(self.nav)
+            return
+        self._nav_back.append(self.nav)
+        self._nav_forward.clear()
+        self._set_navigation(key)
 
     def _on_tag(self, tag: str | None) -> None:
         self.tag = tag
@@ -833,7 +1065,7 @@ class MainWindow(QMainWindow):
     def _on_select(self, entry: Entry) -> bool:
         if self.selected is not None and entry is not self.selected \
                 and not self._detail.confirm_leave():
-            guard = QSignalBlocker(self._browser)
+            _guard = QSignalBlocker(self._browser)
             for row, current in enumerate(self._browser.entries_model.entries):
                 if current.path == self.selected.path:
                     self._browser.setCurrentIndex(self._browser.model().index(row, 0))
@@ -843,14 +1075,26 @@ class MainWindow(QMainWindow):
         stats = self.db.get_stats(entry.path)
         self._detail.set_entry(entry, self._icon_for(entry), stats)
         self._status_path.setText(str(entry.path))
+        self._status_path.setToolTip(str(entry.path))
         return True
 
-    def _launch(self, entry: Entry, admin: bool, args: str = "") -> None:
+    def _launch(self, entry: Entry, admin: bool, args: str = "", planned_entry=None) -> None:
+        category = next((c for c in self.categories if c.path == entry.path), None)
+        if category and entry.entry_type == "dir" and planned_entry is None:
+            self._search_timer.stop()
+            self._search.clear()
+            self.query = ""
+            self._on_nav(category.cat_id)
+            self._sidebar.set_current(category.cat_id)
+            return
         try:
             # admin 记忆生效：右键点了「启动」也会按记忆提权
             environment = profile_environment(entry.runtime_profile) if entry.runtime_profile else None
             from core.launch_history import start
-            identifier, msg = start(entry, args, environment, admin or entry.admin, self.app_dir / "config/launches")
+            identifier, msg = start(
+                planned_entry or entry, args, environment, admin or entry.admin, self.app_dir / "config/launches",
+                terminal=self.settings.get("terminal", ""),
+                terminal_args=self.settings.get("terminal_args", ""))
             if identifier:
                 self._launch_states[identifier] = "starting"
         except (RuntimeError, ValueError, OSError) as e:
@@ -859,36 +1103,147 @@ class MainWindow(QMainWindow):
             return
         self.db.record_run(entry.path)
         entry.runs += 1
+        entry.recent_hidden = False
         entry.last_run = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._set_status(msg)
         self._status_path.setText(str(entry.path))
-        self._browser.viewport().update()
+        self._status_path.setToolTip(str(entry.path))
+        self._rebuild_sidebar()
+        self._rebuild_grid()
         self._on_select(entry)  # 顺便刷新详情面板的统计
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls() and all(u.isLocalFile() for u in event.mimeData().urls()):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        paths = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
+        if paths:
+            event.acceptProposedAction()
+            self._manage_files(paths)
+
+    def _manage_files(self, paths=None):
+        if not self._detail.confirm_leave(): return
+        from ui.widgets.file_manager import FileManagerDialog
+        dialog = FileManagerDialog(self.workspace, self.categories, self.entries, self.db, self)
+        if isinstance(paths, list):
+            QTimer.singleShot(0, lambda: dialog.import_items(paths))
+        # Delay scans until the filesystem and metadata operation has completed.
+        self._watch_timer.stop()
+        self._watcher.blockSignals(True)
+        try:
+            dialog.exec()
+        finally:
+            self._watcher.blockSignals(False)
+        if dialog.changed: self.reload()
+
+    def _browse_files(self, entry):
+        from ui.widgets.file_manager import ToolFilesDialog
+        ToolFilesDialog(entry, self.settings, self).exec()
+        self.reload()
+
+    def _clear_recent(self):
+        entries = [e for e in self.entries if e.runs > 0 and not e.recent_hidden]
+        if not entries: return
+        if QMessageBox.question(self, "清空最近记录", f"清空当前工作区的 {len(entries)} 项最近记录？\n累计启动次数与运行日志会保留。",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            self._remove_recent(entries)
+
+    def _remove_recent(self, entries):
+        self.db.clear_recent([e.path for e in entries])
+        for entry in entries: entry.recent_hidden = True
+        self._rebuild_sidebar()
+        self._rebuild_grid()
+        self._set_status(f"已清理 {len(entries)} 项最近记录")
+
+    def _edit_aliases(self, entry):
+        text, ok = QInputDialog.getText(self, "搜索别名", "多个别名用逗号分隔", text=", ".join(entry.aliases))
+        if not ok: return
+        entry.aliases = list(dict.fromkeys(t.strip() for t in text.replace('，', ',').split(',') if t.strip()))
+        self.db.set_aliases(entry.path, entry.aliases)
+        self._search_index.update(entry, self._note_cache.get(str(entry.path), ""))
+        self._rebuild_grid()
+        self._on_select(entry)
+        self._set_status("已保存搜索别名")
+
+    def _launch_plans(self, entry):
+        from ui.widgets.launch_plans import LaunchPlansDialog
+        dialog = LaunchPlansDialog(entry, self)
+        def save_plans(plans):
+            self.db.set_launch_plans(entry.path, plans)
+            entry.launch_plans = plans
+        dialog.plansChanged.connect(save_plans)
+        dialog.exec()
+        self._on_select(entry)
+        if dialog.run_plan: self._run_launch_plan(entry, dialog.run_plan)
+
+    def _run_launch_plan(self, entry, plan):
+        from dataclasses import replace
+        from ui.widgets.launch_plans import ParametersDialog
+        from core.command_templates import fields
+        command = plan['command']
+        if fields(command):
+            params = ParametersDialog(command, self, defaults=plan.get("values", {}), plan_name=plan["name"])
+            if not params.exec(): return
+            command = params.result_command
+            plan["values"] = params.values
+            for saved in entry.launch_plans:
+                if saved['name'] == plan['name']: saved['values'] = params.values
+            self.db.set_launch_plans(entry.path, entry.launch_plans)
+        planned = replace(entry, command=command, shell_type=plan['shell_type'], admin=plan['admin'])
+        self._launch(entry, plan['admin'], planned_entry=planned)
+
+    def _open_entry_folder(self, entry: Entry, parent: bool = False) -> None:
+        path = entry.path.parent if parent else entry.path
+        try:
+            launcher.open_in_explorer(path)
+        except (OSError, RuntimeError) as error:
+            self._set_status(f"打开失败: {error}", ok=False)
+            QMessageBox.warning(self, "无法打开目录", str(error))
+            return
+        self._set_status(f"已打开: {path}")
 
     def _show_context(self, entry: Entry, pos: QPoint) -> None:
         if not self._on_select(entry):
             return
         menu = QMenu(self)
-        menu.addAction("启动\tEnter", lambda: self._launch(entry, False))
-        menu.addAction("带参数启动…\tShift+Enter", lambda: self._launch_with_args(entry))
-        menu.addAction("管理员启动\tCtrl+Enter", lambda: self._launch(entry, True))
-        always_admin = menu.addAction("始终以管理员启动")
-        always_admin.setCheckable(True)
-        always_admin.setChecked(entry.admin)
-        always_admin.triggered.connect(lambda checked: self._toggle_admin(entry, checked))
-        menu.addAction("打开目录\tCtrl+E", lambda: launcher.open_in_explorer(entry.path))
+        directory = entry.entry_type == 'dir'
+        menu.addAction('进入目录' if directory else '启动\tEnter', lambda: self._launch(entry, False))
+        menu.addAction('打开目录\tCtrl+E' if entry.is_dir else '打开所在文件夹\tCtrl+E', lambda: self._open_entry_folder(entry))
+        menu.addAction('复制路径\tCtrl+Shift+C', lambda: self._copy_entry_path(entry))
+        menu.addAction('取消固定\tCtrl+D' if entry.pinned else '固定\tCtrl+D', lambda: self._toggle_pin(entry, not entry.pinned))
         menu.addSeparator()
-        menu.addAction("复制路径\tCtrl+Shift+C",
-                       lambda: QGuiApplication.clipboard().setText(str(entry.path)))
-        menu.addAction("取消固定\tCtrl+D" if entry.pinned else "固定\tCtrl+D",
-                       lambda: self._toggle_pin(entry, not entry.pinned))
-        menu.addAction("编辑命令…\tF2", lambda: self._popup_command(entry))
-        menu.addAction("运行环境…\tCtrl+Shift+R", lambda: self._edit_runtime_profile(entry))
-        menu.addAction("启动配置…", lambda: self._edit_presets(entry))
-        menu.addAction("识别启动入口…", lambda: self._detect_entry(entry))
-        menu.addAction("检查工具…", lambda: self._check_entry(entry))
-        menu.addAction("编辑标签…", lambda: self._detail._edit_tags())
+        if not directory:
+            launch = menu.addMenu('启动选项')
+            launch.addAction('带参数启动…\tShift+Enter', lambda: self._launch_with_args(entry))
+            launch.addAction('管理员启动\tCtrl+Enter', lambda: self._launch(entry, True))
+            always_admin = launch.addAction('始终以管理员启动')
+            always_admin.setCheckable(True)
+            always_admin.setChecked(entry.admin)
+            always_admin.triggered.connect(lambda checked: self._toggle_admin(entry, checked))
+            launch.addSeparator()
+            launch.addAction('启动方案…', lambda: self._launch_plans(entry))
+            launch.addAction('编辑启动…\tF2', lambda: self._popup_command(entry))
+            launch.addAction('运行环境…\tCtrl+Shift+R', lambda: self._edit_runtime_profile(entry))
+            launch.addAction('识别启动入口…', lambda: self._detect_entry(entry))
+        manage = menu.addMenu('管理')
+        manage.addAction('浏览文件…', lambda: self._browse_files(entry))
+        manage.addAction('编辑搜索别名…', lambda: self._edit_aliases(entry))
+        manage.addAction('编辑标签…', lambda: self._detail._edit_tags())
+        manage.addAction('整理工具…', self._manage_files)
+        manage.addAction('检查工具…', lambda: self._check_entry(entry))
+        more = menu.addMenu('更多')
+        more.addAction('打开上级文件夹', lambda: self._open_entry_folder(entry, parent=True))
+        more.addAction('复制名称', lambda: QGuiApplication.clipboard().setText(entry.path.name))
+        more.addAction('创建桌面快捷方式', lambda: self._create_desktop_shortcut(entry))
+        if entry.runs > 0 and not entry.recent_hidden:
+            more.addAction('移出最近记录', lambda: self._remove_recent([entry]))
         menu.exec(pos)
+
+    def _copy_entry_path(self, entry):
+        QApplication.clipboard().setText(str(entry.path))
+        self._set_status('已复制路径：' + entry.name)
 
     def _launch_with_args(self, entry: Entry) -> None:
         """弹框输入本次启动的追加参数；参数记住后下次回填。
@@ -912,7 +1267,7 @@ class MainWindow(QMainWindow):
             ("已记住管理员启动: " if admin else "已取消管理员启动: ") + entry.name)
 
     def _popup_command(self, entry: Entry) -> None:
-        dlg = CommandDialog(entry.command or "", entry.shell_type, self)
+        dlg = CommandDialog(entry.command or "", entry.shell_type, self, entry)
         if dlg.exec():
             cmd, shell = dlg.result()
             self._edit_command(entry, cmd, shell)
@@ -1004,6 +1359,10 @@ class MainWindow(QMainWindow):
                 selector.addItem(self.workspace.name, str(self.workspace))
                 current = selector.count()-1
             selector.setCurrentIndex(current)
+            needed = max((selector.fontMetrics().horizontalAdvance(selector.itemText(i))
+                          for i in range(selector.count())), default=144) + 60
+            selector.setMinimumWidth(min(420, max(144, needed)))
+            selector.setToolTip(selector.currentText() + "\n" + str(selector.currentData() or ""))
 
     def _set_view(self, view: str) -> None:
         self.view = view
@@ -1024,12 +1383,35 @@ class MainWindow(QMainWindow):
     def _apply_theme(self, theme: str) -> None:
         self.settings.set("theme", theme)
         apply_theme(QApplication.instance(), self.app_dir, theme)
-        self._theme_btn.setIcon(svg_icon(SVG_SUN if theme == "dark" else SVG_MOON, ICON_COLOR))
+        self._applied_theme = resolve_theme(theme)
+        dark = self._applied_theme == "dark"
+        self._theme_btn.setIcon(svg_icon(SVG_SUN if dark else SVG_MOON, ICON_COLOR))
+        modes = {"system": "跟随系统", "light": "浅色", "dark": "深色"}
+        self._theme_btn.setToolTip(
+            f"外观主题：{modes.get(theme, '跟随系统')}（当前{'深色' if dark else '浅色'}）")
         self._browser.viewport().update()
+        self._sidebar.update()
+        self._detail.update()
+        if self.centralWidget():
+            self.centralWidget().update()
         self._apply_native_frame()
 
-    def _toggle_theme(self) -> None:
-        self._apply_theme("dark" if self.settings.get("theme") == "light" else "light")
+    def _show_theme_menu(self) -> None:
+        menu = QMenu(self)
+        current = self.settings.get("theme", "system")
+        for value, label in (("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")):
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(current == value)
+            action.triggered.connect(lambda _=False, v=value: self._apply_theme(v))
+        menu.exec(self._theme_btn.mapToGlobal(self._theme_btn.rect().bottomLeft()))
+
+    def _sync_system_theme(self) -> None:
+        """「跟随系统」时，系统亮暗切换后自动重载主题。"""
+        if self.settings.get("theme", "system") != "system":
+            return
+        if resolve_theme("system") != self._applied_theme:
+            self._apply_theme("system")
 
     def _panel_widths(self) -> dict:
         if not self._detail.isHidden():
@@ -1062,14 +1444,12 @@ class MainWindow(QMainWindow):
         self._restore_panel_widths()
         self.settings.update({"detail_visible": visible, "panel_widths": self._panel_widths()})
 
-    def _set_titlebar_style(self, style: str) -> None:
-        self.settings.set("titlebar", "native")
-        self._apply_native_frame()
-
     def _apply_native_frame(self) -> None:
         from ui.native_frame import apply_native_frame, apply_backdrop
-        apply_native_frame(self, self.settings.get("theme", "light") == "dark")
         active = apply_backdrop(self)
+        # Caption colors must be applied after the backdrop, otherwise DWM
+        # resets the non-client frame during theme changes.
+        apply_native_frame(self, resolve_theme(self.settings.get("theme", "system")) == "dark")
         if self.property("nativeBackdrop") != active:
             self.setProperty("nativeBackdrop", active)
             self.style().unpolish(self)
@@ -1081,17 +1461,18 @@ class MainWindow(QMainWindow):
         from ui.widgets.tool_center import ToolCenter
         ToolCenter(self).exec()
 
-    def _edit_presets(self, entry):
-        from ui.widgets.tool_center import PresetDialog
-        PresetDialog(self, entry).exec()
-
-    def _launch_recipe(self, entry, recipe):
-        import copy
-        configured = copy.copy(entry)
-        configured.command = recipe.get("command") or entry.command
-        configured.admin = recipe.get("admin", entry.admin)
-        configured.runtime_profile = recipe.get("runtime_profile", entry.runtime_profile)
-        self._launch(configured, configured.admin, recipe.get("args", ""))
+    def _create_desktop_shortcut(self, entry: Entry) -> None:
+        try:
+            from core.shortcut import create_desktop_shortcut
+            link = create_desktop_shortcut(entry)
+        except (RuntimeError, OSError) as error:
+            self._set_status(f"创建快捷方式失败: {error}", ok=False)
+            QMessageBox.warning(self, "创建桌面快捷方式", str(error))
+            return
+        self._set_status(f"已创建桌面快捷方式: {link.name}")
+        if self._tray.isVisible():
+            self._tray.showMessage("SuperBay", f"已创建桌面快捷方式：{link.name}",
+                                   QSystemTrayIcon.MessageIcon.Information, 2000)
 
     def _detect_entry(self, entry):
         from core.toolbox import suggestions
@@ -1115,15 +1496,10 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "工具检查 · " + entry.name, "\n".join(issues) if issues else "路径、启动入口和运行环境可用。")
 
     def _relocate_entry(self, entry, new_path):
-        import json
         old = str(entry.path)
         with self.db._conn:
             for table in ("meta", "stats"):
                 self.db._conn.execute("UPDATE OR REPLACE " + table + " SET path=? WHERE path=?", (str(new_path), old))
-        presets = dict(self.settings.get("launch_presets", {}))
-        if old in presets:
-            presets[str(new_path)] = presets.pop(old)
-            self.settings.set("launch_presets", presets)
         entry.path = new_path
         entry.is_dir = new_path.is_dir()
         if not new_path.is_relative_to(self.workspace):
@@ -1162,7 +1538,6 @@ class MainWindow(QMainWindow):
         """设置对话框：外观 / 工作区 / 热键 / 数据位置，widgets 只发信号。"""
         dlg = SettingsDialog(self.app_dir, self.settings, self)
         dlg.themeChanged.connect(self._apply_theme)
-        dlg.titleBarChanged.connect(self._set_titlebar_style)
         dlg.viewChanged.connect(self._set_view)
         dlg.tagCloudChanged.connect(self._set_show_tags)
         dlg.hotkeyChanged.connect(lambda text: self.settings.set("hotkey", text))
@@ -1284,10 +1659,11 @@ class MainWindow(QMainWindow):
             return
         e.ignore()
         self.hide()
-        hotkey = self.settings.get("hotkey", "Alt+Space")
-        self._tray.showMessage("SuperGUI", f"已最小化到托盘，{hotkey} 可唤起",
+        hotkey = self.settings.get("hotkey", "Ctrl+Alt+K")
+        self._tray.showMessage("SuperBay", f"已最小化到托盘，{hotkey} 可唤起",
                                QSystemTrayIcon.MessageIcon.Information, 2000)
 
     def _set_status(self, text: str, ok: bool = True) -> None:
         self._status_ok.setText(("● " if ok else "✕ ") + text)
+        self._status_ok.setToolTip(text)
         self._status_ok.setStyleSheet("" if ok else "color: #f0524f;")

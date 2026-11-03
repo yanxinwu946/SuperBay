@@ -2,7 +2,6 @@
 import json
 import os
 from pathlib import Path
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -12,6 +11,7 @@ from unittest.mock import patch
 from config.db import DB
 from config.settings import Settings
 from core.models import Entry
+from core.launcher import find_main_exe
 from core.toolbox import workspace_roots,scan_roots,suggestions,health,export_backup,import_backup
 from core.launch_history import start,history
 
@@ -37,15 +37,23 @@ class ToolboxFeatures(unittest.TestCase):
         with patch('core.toolbox.shutil.which',return_value=None):self.assertTrue(any('找不到' in v for v in health(entry)))
         (folder/'cli.py').write_text('pass');self.assertTrue(any('多个入口' in v for v in health(entry)))
         (folder/'setup.exe').touch();self.assertEqual(len(suggestions(entry)),2)
-    def test_backup_roundtrip_with_relocated_metadata_and_presets(self):
+    def test_lnk_is_recognized_as_main_entry_and_launched_directly(self):
+        folder=self.root/'tool';folder.mkdir();link=folder/'demo.lnk';link.write_bytes(b'')
+        entry=self.entry(folder)
+        self.assertEqual(find_main_exe(folder),link)
+        self.assertIn(str(link),suggestions(entry)[0][1])
+        with patch('core.launch_history.launcher._shell_execute') as execute:
+            identifier,message=start(entry,'',None,False,self.root/'launches')
+        self.assertIsNone(identifier);self.assertIn('快捷方式',message)
+        self.assertEqual(execute.call_args[0][0],link)
+    def test_backup_roundtrip_with_relocated_metadata(self):
         old=self.root/'old';new=self.root/'new';path=old/'tools'/'main.py'
         self.settings.set('workspace_root',str(old));self.settings.set('workspace_roots',[str(old)])
-        self.settings.set('launch_presets',{str(path):[{'name':'代理','args':'--proxy 127.0.0.1:8080'}]})
         self.db.set_tags(path,['test']);self.db.set_command(path,'python main.py');self.db.record_run(path)
         self.db.set_runtime_profile(path,{'root':str(old/'scoop'),'versions':{}})
         backup=self.root/'backup.zip';export_backup(backup,self.settings,self.db)
         import_backup(backup,self.settings,self.db,str(old),str(new))
-        moved=str(new/'tools'/'main.py');self.assertIn(moved,self.db.all_meta());self.assertIn(moved,self.settings.get('launch_presets'))
+        moved=str(new/'tools'/'main.py');self.assertIn(moved,self.db.all_meta())
         self.assertEqual(self.db.all_meta()[moved]['runtime_profile']['root'],str(new/'scoop'))
         self.assertEqual(self.db.get_stats(Path(moved))['runs'],1)
         self.assertEqual(self.settings.get('workspace_root'),str(new))
@@ -83,11 +91,10 @@ class ToolboxDialogs(unittest.TestCase):
         os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
         from PySide6.QtWidgets import QApplication
         cls.app=QApplication.instance() or QApplication([])
-    def test_preset_persistence_palette_selection_and_diagnostics(self):
+    def test_palette_launch_and_diagnostics(self):
         from PySide6.QtTest import QTest
         from ui.main_window import MainWindow
-        from ui.theme import apply_theme
-        from ui.widgets.tool_center import PresetDialog,ToolCenter,WorkspaceDialog
+        from ui.widgets.tool_center import ToolCenter,WorkspaceDialog
         from ui.widgets.palette import LaunchPalette
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);workspace=root/'workspace';tool=workspace/'A-tools'/'demo';tool.mkdir(parents=True);(tool/'main.py').write_text('pass')
@@ -98,16 +105,13 @@ class ToolboxDialogs(unittest.TestCase):
                 QTest.qWait(10)
                 if main.entries and not main._reloading:break
             self.assertEqual(len(main.entries),1);entry=main.entries[0]
-            dialog=PresetDialog(main,entry);dialog.name.setText('代理配置');dialog.args.setText('--proxy http://localhost:8080');dialog.save()
-            self.assertEqual(settings.get('launch_presets')[str(tool)][0]['name'],'代理配置')
-            recipe_dialog=LaunchPalette(main.entries,{},main._icon_for,lambda:False,main)
-            self.assertEqual(recipe_dialog.presets.count(),2)
-            calls=[];recipe_dialog.recipeRequested.connect(lambda entry,value:calls.append(value))
-            recipe_dialog.presets.setCurrentIndex(1);recipe_dialog._launch(entry)
-            self.assertEqual(calls[0]['args'],'--proxy http://localhost:8080')
+            palette=LaunchPalette(main.entries,{},main._icon_for,lambda:False,main)
+            calls=[];palette.launchRequested.connect(calls.append)
+            palette._launch(entry)
+            self.assertEqual(calls,[entry])
             center=ToolCenter(main);self.assertEqual(center.checks.topLevelItemCount(),1)
             roots=WorkspaceDialog(main);self.assertEqual(len(roots.shortcuts),2)
-            dialog.close();recipe_dialog.close();center.close();roots.close()
+            palette.close();center.close();roots.close()
             main._tray_quit=True;main.close();main.deleteLater();self.app.processEvents()
 
 

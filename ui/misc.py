@@ -3,11 +3,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QRect, QRectF, Qt
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 ICON_COLOR = "#8a93a3"   # 全局未选中图标色，深浅主题通用
+
+# 词边界优先；超长单词（工具名、路径）也要断行，保证文本完整可见。
+WRAP_FLAGS = Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere
+
+
+def wrapped_text_height(text: str, width: int, font: QFont) -> int:
+    """文本按给定宽度换行后的像素高度。"""
+    return QFontMetrics(font).boundingRect(QRect(0, 0, max(1, width), 10000),
+                                           WRAP_FLAGS, text).height()
 
 
 def make_logo_icon(size: int = 64) -> QIcon:

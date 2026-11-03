@@ -1,27 +1,31 @@
-# SuperGUI
+# SuperBay
 
 让散落的工具，成为顺手的工作台。
 
-SuperGUI 是面向 Windows 的本地工具启动器。查找工具、选择运行环境、保存启动配置、记录使用心得，都在一个安静清晰的界面中完成。
+[项目官网与命令启动指南](https://yanxinwu946.github.io/superbay/) · [网站源码](https://github.com/yanxinwu946/yanxinwu946.github.io)
+
+SuperBay 是面向 Windows 的本地工具启动器。查找工具、选择运行环境、编辑启动方式、记录使用心得，都在一个安静清晰的界面中完成。
 
 ## 一个入口，接住日常工作
 
-- **想到就能找到**：搜索名称、标签和笔记，固定常用工具，快速回到最近使用。
-- **顺手启动**：识别启动入口，保存多套参数和命令，需要时以管理员身份运行。
+- **想到就能找到**：搜索名称、标签和笔记，支持拼音与搜索别名，快速回到固定和最近使用。
+- **顺手启动**：编辑启动命令或自动识别入口，保存多套启动方案，以表单填写目标、字典和输出目录。
 - **环境各得其所**：连接 Scoop，为工具选择 Python、Java 或 Node 版本。
+- **终端随你**：命令启动可以交给 WezTerm、Windows Terminal、Alacritty 等外部终端。
+- **整理不费心**：拖入导入、批量标签、分类移动与重命名，工具配置随位置保留。
 - **目录自由切换**：保存常用目录快捷入口，专注当前工作区。
 - **经验留在手边**：Markdown 笔记随工具保存，运行记录方便回看。
 - **换电脑也从容**：导出配置备份，迁移目录与环境绑定。
 
-浅色与深色主题采用统一的 Glass UI 视觉。原生透明材质取决于 Windows 版本与系统设置，不支持时自动回退。
+主题默认跟随系统，也可以手动切换浅色与深色，两者采用统一的 Glass UI 视觉。原生透明材质取决于 Windows 版本与系统设置，不支持时自动回退。
 
 ## 开始使用
 
 需要 Windows 10 / 11、Python 3.10+。
 
 ```powershell
-git clone https://github.com/yanxinwu946/SuperGUI.git
-cd SuperGUI
+git clone https://github.com/yanxinwu946/SuperBay.git
+cd SuperBay
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe main.py
@@ -35,9 +39,8 @@ python -m venv .venv
 
 | 快捷键 | 操作 |
 | --- | --- |
-| Alt+Space | 显示 / 隐藏窗口（可在设置中修改） |
+| Ctrl+Alt+K | 唤起工作台并聚焦搜索 |
 | Ctrl+K | 搜索 |
-| Ctrl+P | 快速启动 |
 | Enter | 启动 |
 | Ctrl+Enter | 管理员启动 |
 | Shift+Enter | 带参数启动 |

@@ -37,3 +37,6 @@ assets/toolbox-manager-*.png
 /package-lock.json
 /tsconfig.json
 /vite.config.ts
+
+# Separate Sites source repository
+/website/

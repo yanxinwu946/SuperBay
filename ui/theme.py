@@ -1,5 +1,6 @@
 """Theme loading and shared material tokens for the application."""
 import logging
+import sys
 from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
@@ -7,9 +8,30 @@ from PySide6.QtWidgets import QApplication
 log = logging.getLogger(__name__)
 
 
+def system_theme() -> str:
+    """Windows 应用主题；系统不可读时退回浅色。"""
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as key:
+                return "light" if winreg.QueryValueEx(key, "AppsUseLightTheme")[0] else "dark"
+        except OSError:
+            pass
+    return "light"
+
+
+def resolve_theme(theme: str | None) -> str:
+    """把设置值（system / light / dark）解析成实际主题。"""
+    if (theme or "system") == "system":
+        return system_theme()
+    return "dark" if theme == "dark" else "light"
+
+
 def apply_theme(app: QApplication, app_dir: Path, theme: str) -> None:
-    """加载 ui/themes/<theme>.qss；文件没了只记日志，不影响启动。"""
-    import sys
+    """加载解析后的 ui/themes/<theme>.qss；文件没了只记日志，不影响启动。"""
+    theme = resolve_theme(theme)
     if getattr(sys, "frozen", False):
         from core.app_paths import RESOURCE_DIR
         app_dir = RESOURCE_DIR

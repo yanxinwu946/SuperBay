@@ -77,11 +77,6 @@ QToolTip { background: #3a3f47; color: #fff; border: none; padding: 5px 9px; bor
 }
 #MiniBtn:hover { border-color: #3cb56f; color: #5fd08e; }
 
-#CmdBox {
-    background: #1e2126; border: 1px solid #343941; border-radius: 8px;
-    color: #5fd08e; font-family: "Cascadia Code", Consolas, monospace;
-    font-size: 12px; padding: 9px 11px;
-}
 #NoteView, #NoteEdit {
     background: #1e2126; border: 1px solid #343941; border-radius: 8px;
     font-size: 12px; padding: 8px; color: #e6e9ee; selection-background-color: #2f5d43;
@@ -134,20 +129,6 @@ QDialogButtonBox QPushButton:hover { background: #4cc780; }
 #SettingsHint { color: #9aa3af; font-size: 11px; }
 #SettingsHint[invalid="true"] { color: #f0524f; }
 QLineEdit[invalid="true"] { border-color: #f0524f; }
-
-/* ── macOS 风格标题栏 ── */
-#TitleBar { background: #26292f; border-bottom: 1px solid #343941; }
-#TitleText { color: #9aa3af; font-size: 12px; font-weight: 600; }
-#MacBtn { border: none; border-radius: 7px; color: transparent; font-size: 9px; font-weight: 700; padding: 0; }
-#MacBtn[kind="close"] { background: #ff5f57; }
-#MacBtn[kind="min"] { background: #febc2e; }
-#MacBtn[kind="max"] { background: #28c840; }
-#MacBtn:hover { color: rgba(0, 0, 0, 110); }
-
-/* ── Windows 风格标题栏按钮（— □ ✕ 右侧，悬停变灰，关闭悬停变红） ── */
-#WinBtn { border: none; background: transparent; color: #9aa3af; font-size: 13px; padding: 0 0 2px 0; }
-#WinBtn:hover { background: #343941; }
-#WinBtn[kind="close"]:hover { background: #e81123; color: #ffffff; }
 
 /* Virtualized browser: spacing and hierarchy follow the existing theme. */
 #EntryView { background: transparent; border: none; outline: none; }

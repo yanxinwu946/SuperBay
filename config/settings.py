@@ -11,13 +11,14 @@ log = logging.getLogger(__name__)
 DEFAULTS = {
     "workspace_root": "",      # 空则启动时探测/询问
     "workspace_presets": None,   # 目录快捷入口 [{name, path}]
-    "theme": "light",          # light | dark
-    "titlebar": "macos",       # macos（左侧交通灯）| windows（右侧 — □ ✕）
+    "theme": "system",         # system | light | dark
     "view": "list",            # grid | list
     "detail_visible": False,   # 详情面板按需打开，给结果保留更多空间
     "show_tags": False,        # 侧栏标签云默认隐藏
-    "hotkey": "Alt+Space",
+    "hotkey": "Ctrl+Alt+K",
     "scoop_root": "",          # 空则自动发现当前 Windows 用户的 Scoop 安装
+    "terminal": "",            # 终端程序路径；空则使用系统控制台
+    "terminal_args": "",       # 终端参数模板，{cwd} / {command}
     "scan_depth": 2,           # 目录层级，工作区根目录不计入
     "window": {"w": 1440, "h": 860, "x": None, "y": None, "maximized": False},  # x/y 为空则交给系统摆放
 }
@@ -60,6 +61,11 @@ class Settings:
                         self._data[k] = v
             except (yaml.YAMLError, OSError) as e:
                 log.error("读取设置失败，使用默认值: %s", e)
+        # 标题栏统一走系统原生、启动配置已移除：清理旧配置。
+        if any(key in self._data for key in ("titlebar", "launch_presets")):
+            self._data.pop("titlebar", None)
+            self._data.pop("launch_presets", None)
+            self.save()
 
     def get(self, key: str, default=None):
         return self._data.get(key, default)

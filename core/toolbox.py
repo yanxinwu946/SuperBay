@@ -52,7 +52,7 @@ def suggestions(entry):
             command = f'{python} -u {quoted}'
         elif ext == '.jar': command = f'java -jar {quoted}'
         elif ext in ('.js', '.mjs', '.cjs'): command = f'node {quoted}'
-        elif ext in ('.exe', '.bat', '.cmd'): command = quoted
+        elif ext in ('.exe', '.bat', '.cmd', '.lnk'): command = quoted
         elif ext == '.ps1': command = f'powershell -NoProfile -File {quoted}'
         else: continue
         if any(word in path.stem.lower() for word in ('uninstall', 'setup', 'update')):
@@ -129,6 +129,8 @@ def import_backup(source, settings, db, old_root='', new_root=''):
             except ValueError: pass
         return value
     config=remap(config)
+    config.pop('launch_presets', None)  # 旧备份里的已下线配置
+    config.pop('titlebar', None)
     with db._conn:
         for table, records in rows.items():
             allowed={r[1] for r in db._conn.execute('PRAGMA table_info('+table+')')}

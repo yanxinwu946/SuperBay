@@ -24,7 +24,8 @@ class ScoopDialog(QDialog):
         self.settings = settings
         self.setObjectName("RuntimeDialog")
         from ui.native_frame import apply_native_frame
-        apply_native_frame(self, settings.get("theme", "light") == "dark")
+        from ui.theme import resolve_theme
+        apply_native_frame(self, resolve_theme(settings.get("theme", "system")) == "dark")
         configured = settings.get("scoop_root", "")
         self.root = Path(configured) if configured else scoop.detect_root()
         self.runtimes = []
@@ -52,6 +53,10 @@ class ScoopDialog(QDialog):
         self.refresh.setObjectName("GhostBtn")
         self.refresh.clicked.connect(self._refresh)
         binding.addWidget(self.refresh)
+        self.packages = QPushButton("Scoop 软件管理")
+        self.packages.setAutoDefault(False)
+        self.packages.clicked.connect(self._packages)
+        binding.addWidget(self.packages)
         layout.addLayout(binding)
         filters = QHBoxLayout()
         self.search = QLineEdit()
@@ -71,8 +76,8 @@ class ScoopDialog(QDialog):
         self.table.setUniformRowHeights(True)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setAlternatingRowColors(True)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.table.header().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.table.header().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self.table.itemSelectionChanged.connect(self._selection_changed)
         layout.addWidget(self.table, 1)
         actions = QHBoxLayout()
@@ -118,6 +123,12 @@ class ScoopDialog(QDialog):
         self.process.errorOccurred.connect(self._process_error)
         self.verify_timer = QTimer(self, singleShot=True, interval=15000)
         self.verify_timer.timeout.connect(self._verify_timeout)
+        self._refresh()
+
+    def _packages(self):
+        if self._busy(): return
+        from ui.widgets.scoop_packages import ScoopPackagesDialog
+        ScoopPackagesDialog(self.root, self).exec()
         self._refresh()
 
     def _selected(self):

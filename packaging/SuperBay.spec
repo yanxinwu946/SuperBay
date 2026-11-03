@@ -36,7 +36,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='SuperGUI',
+    name='SuperBay',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

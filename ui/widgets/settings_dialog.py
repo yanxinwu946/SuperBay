@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QScrollArea,
     QDialog,
-    QDialogButtonBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -29,17 +28,16 @@ from PySide6.QtWidgets import (
 from ui.widgets.modern_combo import ModernComboBox as QComboBox
 
 
-from config.settings import Settings, default_workspace_presets
+from config.settings import Settings
 from core.hotkey import parse_hotkey
 from core.version import __version__
 
-THEMES = (("light", "浅色"), ("dark", "深色"))
-TITLEBARS = (("native", "跟随系统"),)
+THEMES = (("system", "跟随系统"), ("light", "浅色"), ("dark", "深色"))
 VIEWS = (("grid", "网格"), ("list", "列表"))
 TAG_CLOUD = ((False, "隐藏"), (True, "显示"))
 
 HOTKEY_SYNTAX = ("使用 Ctrl、Alt、Shift 或 Win 搭配按键。"
-                 "例如 Alt+Space、Ctrl+Alt+K。F1–F12 可单独使用。")
+                 "例如 Ctrl+Alt+K、Ctrl+Alt+K。F1–F12 可单独使用。")
 
 # 推荐窗口尺寸：(显示名, (宽, 高))，None 表示自定义
 WINDOW_PRESETS = (
@@ -54,8 +52,7 @@ WINDOW_MIN_W, WINDOW_MIN_H = 1100, 680   # 与 MainWindow.setMinimumSize 保持�
 
 
 class SettingsDialog(QDialog):
-    themeChanged = Signal(str)               # "light" | "dark"
-    titleBarChanged = Signal(str)            # "macos" | "windows"
+    themeChanged = Signal(str)               # "system" | "light" | "dark"
     viewChanged = Signal(str)                # "grid" | "list"
     tagCloudChanged = Signal(bool)           # 侧栏标签云显隐
     hotkeyChanged = Signal(str)              # 校验通过的新热键
@@ -95,7 +92,7 @@ class SettingsDialog(QDialog):
         self._nav.setObjectName("SettingsNav")
         self._nav.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         nav_layout.addWidget(self._nav, 1)
-        version = QLabel(f"SuperGUI  {__version__}")
+        version = QLabel(f"SuperBay  {__version__}")
         version.setObjectName("SettingsHint")
         nav_layout.addWidget(version)
         layout.addWidget(rail)
@@ -105,6 +102,7 @@ class SettingsDialog(QDialog):
             ("外观", [self._build_appearance]),
             ("窗口", [self._build_window_size]),
             ("工作区", [self._build_workspace]),
+            ("启动", [self._build_launch]),
             ("快捷键", [self._build_hotkey]),
             ("关于", [self._build_data]),
         ]
@@ -148,7 +146,8 @@ class SettingsDialog(QDialog):
         foot.addWidget(done)
         root.addWidget(footer)
         from ui.native_frame import apply_native_frame
-        apply_native_frame(self, settings.get("theme", "light") == "dark")
+        from ui.theme import resolve_theme
+        apply_native_frame(self, resolve_theme(settings.get("theme", "system")) == "dark")
 
     # ── 布局工具 ──
     def _card(self, title: str) -> tuple[QWidget, QVBoxLayout]:
@@ -176,22 +175,23 @@ class SettingsDialog(QDialog):
         lay.setSpacing(10)
         k = QLabel(key)
         k.setObjectName("SettingsKey")
-        k.setFixedWidth(80)
+        k.setMinimumWidth(80)
+        k.setWordWrap(True)
         lay.addWidget(k)
         return row, lay
 
     def _path_label(self, text: str) -> QLabel:
-        """长路径中间省略，完整路径放 tooltip，文本可选中复制。"""
+        """路径完整显示；放不下时由标签换行，tooltip 保留原文。"""
         lab = QLabel()
         lab.setObjectName("SettingsValue")
+        lab.setWordWrap(True)
         lab.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._set_path(lab, text)
         return lab
 
     @staticmethod
     def _set_path(lab: QLabel, text: str) -> None:
-        lab.setText(lab.fontMetrics().elidedText(
-            text, Qt.TextElideMode.ElideMiddle, 360))
+        lab.setText(text)
         lab.setToolTip(text)
 
     @staticmethod
@@ -206,9 +206,8 @@ class SettingsDialog(QDialog):
         box, inner = self._card("外观")
 
         row, lay = self._row("主题")
-        self._theme_combo = self._make_combo(THEMES, self.settings.get("theme", "light"))
-        self._theme_combo.currentIndexChanged.connect(
-            lambda i: self.themeChanged.emit(self._theme_combo.itemData(i)))
+        self._theme_combo = self._make_combo(THEMES, self.settings.get("theme", "system"))
+        self._theme_combo.currentIndexChanged.connect(self._on_theme_selected)
         lay.addWidget(self._theme_combo, 1)
         inner.addWidget(row)
 
@@ -227,6 +226,14 @@ class SettingsDialog(QDialog):
         lay.addWidget(self._tags_combo, 1)
         inner.addWidget(row)
         return box
+
+    def _on_theme_selected(self, index: int) -> None:
+        theme = self._theme_combo.itemData(index)
+        self.themeChanged.emit(theme)
+        # This dialog owns a native caption too; refresh it after the app theme.
+        from ui.native_frame import apply_native_frame
+        from ui.theme import resolve_theme
+        apply_native_frame(self, resolve_theme(theme) == "dark")
 
     @staticmethod
     def _make_combo(items: tuple[tuple[object, str], ...], current) -> QComboBox:
@@ -349,14 +356,66 @@ class SettingsDialog(QDialog):
         root = self.settings.get("workspace_root", "") or "（未设置）"
         self._set_path(self._ws_label, root)
 
+    def _build_launch(self) -> QWidget:
+        box, inner = self._card("启动终端")
+        row, lay = self._row("终端程序")
+        self._terminal_edit = QLineEdit(self.settings.get("terminal", ""))
+        self._terminal_edit.setPlaceholderText("留空使用系统控制台")
+        self._terminal_edit.setClearButtonEnabled(True)
+        self._terminal_edit.editingFinished.connect(self._save_terminal)
+        lay.addWidget(self._terminal_edit, 1)
+        browse = QPushButton("浏览…")
+        browse.setObjectName("MiniBtn")
+        browse.clicked.connect(self._browse_terminal)
+        lay.addWidget(browse)
+        inner.addWidget(row)
+        self._terminal_hint = self._hint(
+            "支持 Windows Terminal、WezTerm、Alacritty。管理员启动仍使用系统控制台。")
+        inner.addWidget(self._terminal_hint)
+
+        row, lay = self._row("参数模板")
+        self._terminal_args = QLineEdit(self.settings.get("terminal_args", ""))
+        self._terminal_args.setPlaceholderText('留空自动识别；例如 -d "{cwd}" {command}')
+        self._terminal_args.editingFinished.connect(self._save_terminal)
+        lay.addWidget(self._terminal_args, 1)
+        inner.addWidget(row)
+        inner.addWidget(self._hint(
+            "占位符：{cwd} 工作目录，{command} 要执行的命令。不同终端参数不同，留空按软件自动识别。"))
+        return box
+
+    def _browse_terminal(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择终端程序", "", "程序 (*.exe);;所有文件 (*)")
+        if path:
+            self._terminal_edit.setText(path)
+            self._save_terminal()
+
+    def _save_terminal(self) -> None:
+        path = self._terminal_edit.text().strip().strip('"')
+        args = self._terminal_args.text().strip()
+        path_ok = not path or Path(path).is_file()
+        args_ok = not args or "{command}" in args
+        for widget, ok in ((self._terminal_edit, path_ok), (self._terminal_args, args_ok)):
+            widget.setProperty("invalid", "" if ok else "true")
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+        if not (path_ok and args_ok):
+            self._terminal_hint.setText(
+                "终端程序不存在，或参数模板缺少 {command}，未保存。")
+            return
+        self._terminal_hint.setText(
+            "支持 Windows Terminal、WezTerm、Alacritty。管理员启动仍使用系统控制台。")
+        self.settings.update({"terminal": path, "terminal_args": args})
+
     def _build_hotkey(self) -> QWidget:
         box, inner = self._card("快速唤起")
         row, lay = self._row("唤起窗口")
-        self._hk_edit = QLineEdit(self.settings.get("hotkey", "Alt+Space"))
+        self._hk_edit = QLineEdit(self.settings.get("hotkey", "Ctrl+Alt+K"))
         self._hk_edit.setPlaceholderText("例如 Ctrl+Alt+K")
         self._hk_edit.editingFinished.connect(self._save_hotkey)
         lay.addWidget(self._hk_edit, 1)
         inner.addWidget(row)
+        inner.addWidget(self._hint("全局快捷键唤起工作台并聚焦搜索；快速启动从工作台按钮打开。"))
         self._hk_hint = self._hint(f"重启后生效。{HOTKEY_SYNTAX}")
         inner.addWidget(self._hk_hint)
         return box
@@ -364,7 +423,7 @@ class SettingsDialog(QDialog):
     def _save_hotkey(self) -> None:
         """失焦时校验并保存；非法输入标红提示，不写 settings。"""
         text = self._hk_edit.text().strip()
-        old = self.settings.get("hotkey", "Alt+Space")
+        old = self.settings.get("hotkey", "Ctrl+Alt+K")
         if not text or text.lower() == old.lower():
             self._hk_edit.setText(old)
             return
@@ -384,6 +443,8 @@ class SettingsDialog(QDialog):
 
     def _build_data(self) -> QWidget:
         box, inner = self._card("应用信息")
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
         backup = QPushButton("备份与迁移")
         backup.setObjectName("GhostBtn")
         def open_backups():
@@ -393,9 +454,19 @@ class SettingsDialog(QDialog):
             dialog.findChild(QTabWidget).setCurrentIndex(2)
             dialog.exec()
         backup.clicked.connect(open_backups)
-        inner.addWidget(backup)
+        actions.addWidget(backup)
+        shortcut = QPushButton("创建桌面快捷方式")
+        shortcut.setObjectName("GhostBtn")
+        shortcut.clicked.connect(self._create_app_shortcut)
+        actions.addWidget(shortcut)
+        actions.addStretch(1)
+        inner.addLayout(actions)
+        self._data_hint = QLabel()
+        self._data_hint.setObjectName("SettingsHint")
+        self._data_hint.setWordWrap(True)
+        inner.addWidget(self._data_hint)
         row, lay = self._row("版本")
-        ver = QLabel(f"SuperGUI v{__version__}")
+        ver = QLabel(f"SuperBay v{__version__}")
         ver.setObjectName("SettingsValue")
         lay.addWidget(ver)
         lay.addStretch(1)
@@ -410,6 +481,15 @@ class SettingsDialog(QDialog):
             lay.addWidget(btn)
             inner.addWidget(row)
         return box
+
+    def _create_app_shortcut(self) -> None:
+        try:
+            from core.shortcut import create_app_shortcut
+            link = create_app_shortcut()
+        except (RuntimeError, OSError) as error:
+            self._data_hint.setText(f"创建失败：{error}")
+            return
+        self._data_hint.setText(f"已创建快捷方式：{link}")
 
     @staticmethod
     def _open_in_explorer(path: Path) -> None:

@@ -6,7 +6,7 @@ from .models import TYPE_DIR, TYPE_FILE, TYPE_TOOL, Category, Entry, strip_prefi
 from .notes import find_note, note_excerpt
 
 log = logging.getLogger(__name__)
-SKIP_CAT_NAMES = {'supergui', 'node_modules', '__pycache__', 'venv', 'vendor'}
+SKIP_CAT_NAMES = {'supergui', 'superbay', 'node_modules', '__pycache__', 'venv', 'vendor'}
 SKIP_FILE_NAMES = {'00.txt', 'note.md', 'note.txt', 'readme.md', 'readme.txt',
     'readme.zh-cn.md', 'license', 'license.md', 'license.txt', 'contributing.md',
     'changelog.md', 'desktop.ini', 'thumbs.db', '.ds_store'}
@@ -82,9 +82,11 @@ def scan(root: Path, max_depth=DEFAULT_SCAN_DEPTH) -> list[Category]:
                 add_entry(category, child)
 
     root_items = _children(root)
+    root_category = None
     files = [p for p in root_items if p.is_file() and p.name.lower() not in SKIP_FILE_NAMES]
     if files:
         category = Category('__root__', strip_prefix(root.name), root)
+        root_category = category
         categories.append(category)
         for path in files: add_entry(category, path)
     for directory in root_items:
@@ -94,6 +96,13 @@ def scan(root: Path, max_depth=DEFAULT_SCAN_DEPTH) -> list[Category]:
                 if resolved in visited or not resolved.is_relative_to(resolved_root): continue
                 visited.add(resolved)
             except OSError: continue
-            visit(directory)
+            children = _children(directory)
+            if _is_tool(directory, children):
+                if root_category is None:
+                    root_category = Category('__root__', strip_prefix(root.name), root)
+                    categories.insert(0, root_category)
+                add_entry(root_category, directory, children)
+            else:
+                visit(directory)
     log.info('扫描完成: %d 个分类, %d 个条目',len(categories),sum(len(c.entries) for c in categories))
     return categories

@@ -21,13 +21,17 @@ class RuntimeProfileDialog(QDialog):
         layout = QVBoxLayout(self)
         heading = QLabel(entry.name)
         heading.setObjectName("ContentTitle")
+        heading.setWordWrap(True)
+        heading.setToolTip(entry.name)
         layout.addWidget(heading)
         note = QLabel("选择此工具使用的版本。")
         note.setWordWrap(True)
         layout.addWidget(note)
-        path = QLabel(str(self.root) if self.root else "未设置 Scoop 目录")
+        path_text = str(self.root) if self.root else "未设置 Scoop 目录"
+        path = QLabel(path_text)
         path.setObjectName("ContentSub")
         path.setWordWrap(True)
+        path.setToolTip(path_text)
         layout.addWidget(path)
         try:
             runtimes = scoop.scan(self.root) if self.root else []

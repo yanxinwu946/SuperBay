@@ -1,11 +1,10 @@
-"""SuperGUI 入口：单实例锁、第二实例唤起、全局热键（默认 Alt+Space）、主题加载、主窗口。"""
+"""SuperBay 入口：单实例锁、第二实例唤起、全局热键（默认 Ctrl+Alt+K）、主题加载、主窗口。"""
 from __future__ import annotations
 
 import ctypes
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QLockFile, QStandardPaths
 from PySide6.QtNetwork import QLocalSocket
@@ -96,7 +95,7 @@ def _register_hotkey(app: QApplication, win: MainWindow, text: str) -> bool:
         log.warning("全局热键 %s 注册失败（已被其他程序占用？）", text)
         return False
 
-    hotkey_filter = HotkeyFilter(win.toggle_visibility)
+    hotkey_filter = HotkeyFilter(win.activate_launcher)
     app.installNativeEventFilter(hotkey_filter)
     # 挂到 app 上防 GC：installNativeEventFilter 不持有 Python 引用
     app._hotkey_filter = hotkey_filter
@@ -107,36 +106,36 @@ def _register_hotkey(app: QApplication, win: MainWindow, text: str) -> bool:
 
 def main() -> int:
     _setup_logging()
-    log.info("SuperGUI v%s 启动", __version__)
+    log.info("SuperBay v%s 启动", __version__)
 
     if sys.platform == "win32":
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("SuperGUI.Launcher")
     app = QApplication(sys.argv)
     from ui.misc import make_logo_icon
     app.setWindowIcon(make_logo_icon())
-    app.setApplicationName("SuperGUI")
+    app.setApplicationName("SuperBay")
     app.setQuitOnLastWindowClosed(False)  # 关窗不退出，走托盘
 
     lock = _acquire_instance_lock()
     if lock is None:
         if _notify_running_instance():
-            print("SuperGUI 已在运行，已唤起主窗口")
+            print("SuperBay 已在运行，已唤起主窗口")
         else:
-            print("SuperGUI 已在运行，但唤起失败")
+            print("SuperBay 已在运行，但唤起失败")
             QMessageBox.warning(
-                None, "SuperGUI 已在运行",
-                "检测到 SuperGUI 已在运行，但无法唤起它的主窗口。\n"
+                None, "SuperBay 已在运行",
+                "检测到 SuperBay 已在运行，但无法唤起它的主窗口。\n"
                 "请查看任务栏 / 系统托盘；若程序已无响应，可先在任务管理器中"
-                "结束 SuperGUI，再重新启动。")
+                "结束 SuperBay，再重新启动。")
         return 0
 
     settings = Settings(APP_DIR / "config" / "config.yaml")
-    apply_theme(app, APP_DIR, settings.get("theme", "light"))
+    apply_theme(app, APP_DIR, settings.get("theme", "system"))
 
     win = MainWindow(APP_DIR, settings)
     win.show()
 
-    hotkey = settings.get("hotkey", "Alt+Space")
+    hotkey = settings.get("hotkey", "Ctrl+Alt+K")
     if not _register_hotkey(app, win, hotkey):
         QMessageBox.warning(
             win, "全局热键不可用",

@@ -1,8 +1,10 @@
 """左侧导航：快捷区（全部/已固定/最近）+ 分类树 + 标签云 + 底部占用卡。"""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import QPointF, Qt, Signal, QSize
+from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QToolButton,
     QFrame,
@@ -17,7 +19,8 @@ from PySide6.QtWidgets import (
 
 from core.models import Category
 from ui.flowlayout import FlowLayout
-from ui.misc import ICON_COLOR, SVG_CLOCK, SVG_FOLDER, SVG_GRID, SVG_STAR, svg_icon
+from ui.misc import (ICON_COLOR, SVG_CLOCK, SVG_FOLDER, SVG_GRID, SVG_STAR,
+                     svg_icon, wrapped_text_height)
 
 ICON_COLOR_ACTIVE = "#2f9d5d"
 
@@ -29,6 +32,83 @@ QUICK_NAVS = (
 )
 
 TAG_CLOUD_MAX_H = 120  # 标签云限高，避免挤占分类区
+
+
+class _ExpandArrow(QToolButton):
+    """分类折叠箭头：细线 chevron，视觉居中于首行文字，随主题与悬停变色。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(16, 34)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._expandable = False
+        self._expanded = False
+        self._hover = False
+
+    def setExpandable(self, expandable: bool) -> None:
+        self._expandable = expandable
+        self.setEnabled(expandable)
+        if not expandable:
+            self._hover = False
+        self.update()
+
+    def setExpanded(self, expanded: bool) -> None:
+        self._expanded = expanded
+        self.update()
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        if not self._expandable:
+            return
+        dark = QApplication.instance().property("superguiTheme") == "dark"
+        color = (QColor("#e6e9ee" if dark else "#2b323d") if self._hover
+                 else QColor("#9aa3af" if dark else "#6b7380"))
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(color, 1.6)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        cx, cy = self.width() / 2, self.height() / 2
+        points = (((cx - 4, cy - 2), (cx, cy + 2), (cx + 4, cy - 2)) if self._expanded
+                  else ((cx - 2, cy - 4), (cx + 2, cy), (cx - 2, cy + 4)))
+        painter.drawPolyline(QPolygonF([QPointF(x, y) for x, y in points]))
+
+
+class _WrappingLabel(QLabel):
+    """Wrap text and reserve the wrapped height so lines are never clipped."""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(text, parent)
+        self.setWordWrap(True)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def _reserve_height(self) -> None:
+        if self.width() <= 0:
+            return
+        needed = wrapped_text_height(self.text(), self.width(), self.font())
+        if self.minimumHeight() != needed:
+            self.setMinimumHeight(needed)
+            self.updateGeometry()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reserve_height()
+
+    def setText(self, text: str):
+        super().setText(text)
+        self._reserve_height()
 
 
 class _NavigationButton(QPushButton):
@@ -44,11 +124,8 @@ class _NavigationButton(QPushButton):
         row.setSpacing(8)
         self._glyph = QLabel()
         self._glyph.setFixedSize(18, 18)
-        self._name = QLabel(text)
+        self._name = _WrappingLabel(text)
         self._name.setObjectName("NavName")
-        self._name.setWordWrap(True)
-        self._name.setMinimumWidth(0)
-        self._name.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._count = QLabel(str(count))
         self._count.setObjectName("NavCount")
         self._count.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -133,15 +210,13 @@ class SideBar(QWidget):
             indent = min(cat.depth, 3)*12
             row_layout.setContentsMargins(indent, 0, 0, 0)
             row_layout.setSpacing(2)
-            arrow = QToolButton()
+            arrow = _ExpandArrow()
             arrow.setObjectName("CategoryExpand")
-            arrow.setFixedSize(16, 28)
-            arrow.setAutoRaise(True)
             if cat.cat_id in parents:
                 arrow.clicked.connect(lambda _=False, key=cat.cat_id: self._toggle_category(key))
                 arrow.setToolTip("展开或收起子分类")
             else:
-                arrow.setEnabled(False)
+                arrow.setExpandable(False)
             row_layout.addWidget(arrow, 0, Qt.AlignmentFlag.AlignTop)
             button = self._nav_btn(cat.cat_id, cat.name, counts[cat.cat_id], SVG_FOLDER)
             button.setMaximumWidth(max(96, self.width()-20-18-indent-14))
@@ -165,8 +240,8 @@ class SideBar(QWidget):
     def _update_category_tree(self):
         for key, (row, category, arrow, expandable) in self._category_rows.items():
             row.setVisible(not any(key.startswith(parent + "/") for parent in self._collapsed))
-            arrow.setArrowType((Qt.ArrowType.RightArrow if key in self._collapsed else Qt.ArrowType.DownArrow)
-                               if expandable else Qt.ArrowType.NoArrow)
+            arrow.setExpandable(expandable)
+            arrow.setExpanded(key not in self._collapsed)
 
     def _build_tag_cloud(self, tags: list[str]) -> None:
         """标签云：流式布局 + 限高滚动。标签和导航互斥，高亮逻辑在 _sync_state。"""

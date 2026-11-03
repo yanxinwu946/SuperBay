@@ -4,8 +4,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QDialog,
-    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -15,6 +15,10 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QStackedWidget,
+    QScrollArea,
+    QTabWidget,
+    QSizePolicy,
+    QApplication,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
@@ -27,41 +31,169 @@ from core.models import DEFAULT_SHELL, Entry
 
 
 class CommandDialog(QDialog):
-    """启动命令编辑对话框：命令文本 + 运行方式（cmd / powershell）。"""
+    """编辑启动方式：命令、shell 与最终执行预览。"""
 
-    def __init__(self, command: str, shell_type: str, parent=None):
+    def __init__(self, command: str, shell_type: str, parent=None, entry: Entry | None = None):
         super().__init__(parent)
-        self.setWindowTitle("编辑启动命令")
+        self._entry = entry
+        self.setWindowTitle("编辑启动")
         self.setObjectName("CmdDialog")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(540)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 18, 18, 18)
-        lay.setSpacing(12)
+        lay.setContentsMargins(22, 20, 22, 18)
+        lay.setSpacing(9)
 
-        hint = QLabel("保存后，直接点击工具的“启动”时使用此命令。")
+        title = QLabel("编辑启动")
+        title.setObjectName("CmdDialogTitle")
+        lay.addWidget(title)
+        hint = QLabel("点击「启动」时执行的命令。留空则自动识别主程序，找不到时打开目录。")
+        hint.setObjectName("CmdDialogHint")
         hint.setWordWrap(True)
         lay.addWidget(hint)
-        lay.addWidget(QLabel("启动命令"))
+        lay.addSpacing(4)
+
+        mode = QHBoxLayout()
+        mode.setSpacing(12)
+        mode_label = QLabel("运行方式")
+        mode_label.setObjectName("CmdFieldLabel")
+        mode.addWidget(mode_label)
+        segment = QFrame()
+        segment.setObjectName("Segmented")
+        seg_lay = QHBoxLayout(segment)
+        seg_lay.setContentsMargins(2, 2, 2, 2)
+        seg_lay.setSpacing(2)
+        self._shell_group = QButtonGroup(self)
+        current = shell_type or DEFAULT_SHELL
+        for text, value in (("cmd", "cmd"), ("PowerShell", "powershell")):
+            button = QPushButton(text)
+            button.setObjectName("SegBtn")
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setProperty("shellValue", value)
+            button.setChecked(value == current)
+            button.toggled.connect(self._refresh_preview)
+            self._shell_group.addButton(button)
+            seg_lay.addWidget(button)
+        if self._shell_group.checkedButton() is None:
+            self._shell_group.buttons()[0].setChecked(True)
+        mode.addWidget(segment)
+        mode.addStretch(1)
+        lay.addLayout(mode)
+
+        cmd_label = QLabel("启动命令")
+        cmd_label.setObjectName("CmdFieldLabel")
+        lay.addWidget(cmd_label)
         self.cmd_edit = QLineEdit(command or "")
-        self.cmd_edit.setPlaceholderText("例如：python app.py（留空自动识别）")
+        self.cmd_edit.setObjectName("CommandInput")
+        self.cmd_edit.setPlaceholderText('例如：python -u "main.py"，留空自动识别')
+        self.cmd_edit.setClearButtonEnabled(True)
+        self.cmd_edit.textChanged.connect(self._refresh_preview)
         lay.addWidget(self.cmd_edit)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("运行方式"))
-        self.shell_combo = QComboBox()
-        self.shell_combo.addItems(["cmd", "powershell"])
-        self.shell_combo.setCurrentText(shell_type or DEFAULT_SHELL)
-        row.addWidget(self.shell_combo, 1)
-        lay.addLayout(row)
+        self._suggestions = []
+        if entry and entry.is_dir and entry.path.exists():
+            from core.toolbox import suggestions
+            self._suggestions = suggestions(entry)
+        self.detect_combo = QComboBox()
+        self.detect_combo.setObjectName("DetectCombo")
+        self.detect_combo.addItem("从目录识别入口…", None)
+        for name, detected in self._suggestions:
+            self.detect_combo.addItem(f"{name}  ·  {detected}", detected)
+        self.detect_combo.currentIndexChanged.connect(self._pick_detected)
+        self.detect_combo.setVisible(bool(self._suggestions))
+        lay.addWidget(self.detect_combo)
 
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
-                                | QDialogButtonBox.StandardButton.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        lay.addWidget(btns)
+        preview_label = QLabel("最终执行")
+        preview_label.setObjectName("CmdFieldLabel")
+        lay.addWidget(preview_label)
+        self.preview = QLabel()
+        self.preview.setObjectName("CmdPreview")
+        self.preview.setWordWrap(True)
+        self.preview.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        lay.addWidget(self.preview)
+        self.workdir = QLabel()
+        self.workdir.setObjectName("CmdDialogHint")
+        self.workdir.setWordWrap(True)
+        lay.addWidget(self.workdir)
+
+        lay.addSpacing(6)
+        buttons = QHBoxLayout()
+        reset = QPushButton("恢复自动")
+        reset.setObjectName("GhostBtn")
+        reset.setToolTip("清空命令，保存后恢复自动识别")
+        reset.setCursor(Qt.CursorShape.PointingHandCursor)
+        reset.clicked.connect(self._reset)
+        cancel = QPushButton("取消")
+        cancel.setObjectName("GhostBtn")
+        cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel.clicked.connect(self.reject)
+        save = QPushButton("保存")
+        save.setObjectName("PrimaryBtn")
+        save.setDefault(True)
+        save.setCursor(Qt.CursorShape.PointingHandCursor)
+        save.clicked.connect(self.accept)
+        buttons.addWidget(reset)
+        buttons.addStretch(1)
+        buttons.addWidget(cancel)
+        buttons.addWidget(save)
+        lay.addLayout(buttons)
+        self._refresh_preview()
+
+    def _shell(self) -> str:
+        button = self._shell_group.checkedButton()
+        return str(button.property("shellValue")) if button else DEFAULT_SHELL
+
+    def _set_shell(self, value: str) -> None:
+        for button in self._shell_group.buttons():
+            button.setChecked(button.property("shellValue") == value)
+
+    def _pick_detected(self, index: int) -> None:
+        detected = self.detect_combo.itemData(index)
+        if not detected:
+            return
+        self.cmd_edit.setText(detected)
+        self._set_shell("cmd")
+        self.detect_combo.blockSignals(True)
+        self.detect_combo.setCurrentIndex(0)
+        self.detect_combo.blockSignals(False)
+
+    def _reset(self) -> None:
+        self.cmd_edit.clear()
+        self._set_shell(DEFAULT_SHELL)
+        self.cmd_edit.setFocus()
+
+    def _cwd(self) -> str:
+        path = self._entry.path
+        return str(path if self._entry.is_dir else path.parent)
+
+    def _auto_text(self) -> str:
+        entry = self._entry
+        if entry is None:
+            return "自动：优先运行目录内主程序，未找到时打开目录"
+        if not entry.is_dir:
+            return f"自动：使用系统默认程序打开 {entry.name}"
+        if not entry.path.exists():
+            return "自动：路径不存在"
+        from core.launcher import find_main_exe
+        exe = find_main_exe(entry.path)
+        if exe:
+            return f"自动：运行 {exe.name}（尚未保存启动命令）"
+        if self._suggestions:
+            return f"自动：打开工具目录（识别到 {len(self._suggestions)} 个入口，可从上方填入命令）"
+        return "自动：打开工具目录（未发现可运行入口）"
+
+    def _refresh_preview(self, *_) -> None:
+        command = self.cmd_edit.text().strip()
+        if command:
+            self.preview.setText(f'cmd.exe /d /s /k "{command}"' if self._shell() == "cmd"
+                                 else f"powershell.exe -NoExit -Command {command}")
+        else:
+            self.preview.setText(self._auto_text())
+        self.preview.setToolTip(self.preview.text())
+        self.workdir.setText(f"工作目录：{self._cwd()}" if self._entry else "")
 
     def result(self) -> tuple[str, str]:
-        return self.cmd_edit.text().strip(), self.shell_combo.currentText()
+        return self.cmd_edit.text().strip(), self._shell()
 
 
 class DetailPanel(QFrame):
@@ -73,7 +205,11 @@ class DetailPanel(QFrame):
     noteSaved = Signal(object)                # Entry
     runtimeRequested = Signal(object)
     detectRequested = Signal(object)
-    presetsRequested = Signal(object)
+    shortcutRequested = Signal(object)
+    plansRequested = Signal(object)
+    filesRequested = Signal(object)
+    planRunRequested = Signal(object, object)
+    aliasesRequested = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -103,14 +239,63 @@ class DetailPanel(QFrame):
 
         self._head = QLabel()
         self._head.setObjectName("DetailTitle")
+        self._head.setWordWrap(True)
         body_lay.addWidget(self._head)
 
         self._build_hero(body_lay)
-        self._build_tag_row(body_lay)
         self._build_actions(body_lay)
-        self._build_command_section(body_lay)
-        self._build_note_section(body_lay)
-        self._build_stats_section(body_lay)
+        self._tabs = QTabWidget()
+        self._tabs.setObjectName("DetailTabs")
+        body_lay.addWidget(self._tabs, 1)
+
+        launch_page = QWidget()
+        launch_layout = QVBoxLayout(launch_page)
+        launch_layout.setContentsMargins(0, 12, 0, 0)
+        launch_layout.setSpacing(12)
+        self._build_command_section(launch_layout)
+        self._build_plans_section(launch_layout)
+        launch_layout.addStretch(1)
+        launch_scroll = QScrollArea()
+        launch_scroll.setWidgetResizable(True)
+        launch_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        launch_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        launch_scroll.setWidget(launch_page)
+        self._tabs.addTab(launch_scroll, "启动")
+
+        note_page = QWidget()
+        note_layout = QVBoxLayout(note_page)
+        note_layout.setContentsMargins(0, 12, 0, 0)
+        self._build_note_section(note_layout)
+        self._tabs.addTab(note_page, "笔记")
+
+        info_page = QWidget()
+        info_layout = QVBoxLayout(info_page)
+        info_layout.setContentsMargins(0, 12, 0, 0)
+        info_layout.setSpacing(16)
+        info_layout.addWidget(self._section_label("完整路径"))
+        self._full_path = QLabel()
+        self._full_path.setWordWrap(True)
+        self._full_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._full_path.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        info_layout.addWidget(self._full_path)
+        paths = QHBoxLayout()
+        paths.addWidget(self._mini_btn("复制路径", lambda: self._entry and QApplication.clipboard().setText(str(self._entry.path))))
+        paths.addWidget(self._mini_btn("打开目录", lambda: self._entry and self.openDirRequested.emit(self._entry)))
+        info_layout.addLayout(paths)
+        info_layout.addWidget(self._mini_btn("创建桌面快捷方式", lambda: self._entry and self.shortcutRequested.emit(self._entry)))
+        self._build_tag_row(info_layout)
+        self._aliases = QLabel()
+        self._aliases.setWordWrap(True)
+        info_layout.addWidget(self._aliases)
+        info_layout.addWidget(self._mini_btn("编辑搜索别名", lambda: self._entry and self.aliasesRequested.emit(self._entry)))
+        self._build_stats_section(info_layout)
+        info_layout.addStretch(1)
+        info_scroll = QScrollArea()
+        info_scroll.setWidgetResizable(True)
+        info_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        info_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        info_scroll.setWidget(info_page)
+        self._tabs.addTab(info_scroll, "信息")
 
         self._root.addWidget(self._body, 1)
 
@@ -127,9 +312,12 @@ class DetailPanel(QFrame):
         text.setSpacing(3)
         self._name = QLabel()
         self._name.setObjectName("DetailName")
+        self._name.setWordWrap(True)
         self._path = QLabel()
         self._path.setObjectName("DetailPath")
         self._path.setWordWrap(True)
+        self._path.setMaximumHeight(42)
+        self._path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         text.addWidget(self._name)
         text.addWidget(self._path)
         hero.addLayout(text, 1)
@@ -149,50 +337,97 @@ class DetailPanel(QFrame):
         row = QHBoxLayout()
         row.setSpacing(8)
 
-        launch_btn = QPushButton("▶  启动")
+        launch_btn = QPushButton("启动")
         launch_btn.setObjectName("PrimaryBtn")
         launch_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         launch_btn.clicked.connect(
             lambda: self._entry and self.launchRequested.emit(self._entry))
 
-        open_btn = QPushButton("打开目录")
+        open_btn = QPushButton("文件")
         open_btn.setObjectName("GhostBtn")
         open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        open_btn.clicked.connect(lambda: self.openDirRequested.emit(self._entry))
+        open_btn.clicked.connect(lambda: self.filesRequested.emit(self._entry))
 
         self._pin_btn = QPushButton("固定")
         self._pin_btn.setObjectName("GhostBtn")
         self._pin_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._pin_btn.clicked.connect(self._toggle_pin)
 
-        row.addWidget(launch_btn, 2)  # 启动是主按钮，占两份宽
+        row.addWidget(launch_btn, 1)  # Equal action widths keep narrow panels balanced.
         row.addWidget(open_btn, 1)
         row.addWidget(self._pin_btn, 1)
         lay.addLayout(row)
 
+    def _build_plans_section(self, lay):
+        head = QHBoxLayout()
+        head.addWidget(self._section_label("启动方案"))
+        head.addStretch(1)
+        head.addWidget(self._mini_btn("管理", lambda: self._entry and self.plansRequested.emit(self._entry)))
+        lay.addLayout(head)
+        self._plan_select = QComboBox()
+        self._plan_select.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self._plan_select.setMinimumContentsLength(1)
+        self._plan_select.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        lay.addWidget(self._plan_select)
+        self._plan_run = QPushButton("执行所选方案")
+        self._plan_run.setObjectName("GhostBtn")
+        self._plan_run.clicked.connect(self._run_plan)
+        lay.addWidget(self._plan_run)
+        self._plan_hint = QLabel("保存不同用法，目标、字典和输出目录可在执行时填写。")
+        self._plan_hint.setWordWrap(True)
+        self._plan_hint.setObjectName("ContentSub")
+        lay.addWidget(self._plan_hint)
+
+    def _run_plan(self):
+        plan = self._plan_select.currentData()
+        if self._entry and plan: self.planRunRequested.emit(self._entry, plan)
+
     def _build_command_section(self, lay: QVBoxLayout) -> None:
         head = QHBoxLayout()
-        head.addWidget(self._section_label("启动命令"))
+        head.addWidget(self._section_label("启动方式"))
         head.addStretch(1)
-        head.addWidget(self._mini_btn("识别", lambda: self._entry and self.detectRequested.emit(self._entry)))
-        head.addWidget(self._mini_btn("配置", lambda: self._entry and self.presetsRequested.emit(self._entry)))
-        head.addWidget(self._mini_btn("编辑", self._edit_command))
+        detect_btn = self._mini_btn(
+            "识别", lambda: self._entry and self.detectRequested.emit(self._entry))
+        detect_btn.setToolTip("扫描工具目录，选择可运行的入口")
+        head.addWidget(detect_btn)
+        edit_btn = self._mini_btn("编辑", self._edit_command)
+        edit_btn.setObjectName("LaunchEditBtn")
+        edit_btn.setToolTip("设置点击「启动」时执行的命令")
+        head.addWidget(edit_btn)
         lay.addLayout(head)
 
-        hint = QLabel("编辑：修改默认启动命令；配置：保存多套命令、参数与环境。")
-        hint.setObjectName("ContentSub")
-        hint.setWordWrap(True)
-        lay.addWidget(hint)
-
+        card = QFrame()
+        card.setObjectName("LaunchCard")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(11, 9, 11, 9)
+        box.setSpacing(4)
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        self._badge = QLabel()
+        self._badge.setObjectName("LaunchBadge")
+        top.addWidget(self._badge)
+        top.addStretch(1)
+        self._shell = QLabel()
+        self._shell.setObjectName("LaunchMeta")
+        top.addWidget(self._shell)
+        box.addLayout(top)
         self._cmd = QLabel()
-        self._cmd.setObjectName("CmdBox")
+        self._cmd.setObjectName("LaunchCmd")
         self._cmd.setWordWrap(True)
+        self._cmd.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._cmd.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        lay.addWidget(self._cmd)
+        box.addWidget(self._cmd)
+        self._meta = QLabel()
+        self._meta.setObjectName("LaunchMeta")
+        self._meta.setWordWrap(True)
+        box.addWidget(self._meta)
+        lay.addWidget(card)
+
         runtime_row = QHBoxLayout()
-        self._runtime = QLabel("继承默认")
+        self._runtime = QLabel("运行环境：继承默认")
         self._runtime.setObjectName("ContentSub")
         self._runtime.setWordWrap(True)
+        self._runtime.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         runtime_row.addWidget(self._runtime, 1)
         runtime_row.addWidget(self._mini_btn("绑定环境", self._edit_runtime))
         lay.addLayout(runtime_row)
@@ -298,20 +533,53 @@ class DetailPanel(QFrame):
         if icon:
             self._icon.setPixmap(icon.pixmap(52, 52))
         self._name.setText(entry.name)
-        self._path.setText(str(entry.path))
+        self._name.setToolTip(entry.name)
+        self._path.setText("工具目录" if entry.is_dir else "文件条目")
+        self._full_path.setText(str(entry.path))
+        self._path.setToolTip(str(entry.path))
         self._tags.setText("  ".join(f"#{t}" for t in entry.tags) or "未设置标签")
         self._pin_btn.setText("取消固定" if entry.pinned else "固定")
-        cmd, shell = entry.command, entry.shell_type
+        self._aliases.setText("搜索别名：" + ("、".join(entry.aliases) or "未设置"))
+        self._plan_select.clear()
+        for plan in entry.launch_plans:
+            self._plan_select.addItem(plan['name'], plan)
+        if not entry.launch_plans: self._plan_select.addItem("还没有启动方案", None)
+        self._plan_run.setEnabled(bool(entry.launch_plans))
+        cmd, shell = entry.command, entry.shell_type or DEFAULT_SHELL
         if cmd:
-            self._cmd.setText(f"[{shell}] {cmd}")
+            badge, tone, command_text = "自定义", "custom", cmd
+            meta = "点击「启动」时按此命令执行"
         else:
             from core.toolbox import suggestions
-            choices = suggestions(entry)
-            self._cmd.setText(("建议：" + choices[0][1]) if len(choices) == 1 else
-                              (f"发现 {len(choices)} 个启动入口，点击“识别”选择" if choices else "未找到入口，可编辑启动命令"))
+            choices = suggestions(entry) if entry.is_dir else []
+            exe = None
+            if entry.is_dir and entry.path.exists():
+                from core.launcher import find_main_exe
+                exe = find_main_exe(entry.path)
+            if exe:
+                badge, tone = "自动", "auto"
+                command_text = exe.name
+                meta = "自动识别到目录内主程序"
+            elif entry.is_dir:
+                badge, tone = "自动", "auto"
+                command_text = "打开工具目录"
+                meta = (f"识别到 {len(choices)} 个可运行入口，可从「编辑启动」填入" if choices
+                        else "未发现可运行入口")
+            else:
+                badge, tone = "自动", "auto"
+                command_text = "使用系统默认程序打开"
+                meta = "未设置自定义命令"
+        self._badge.setText(badge)
+        self._badge.setProperty("tone", tone)
+        self._badge.style().unpolish(self._badge)
+        self._badge.style().polish(self._badge)
+        self._cmd.setText(command_text)
+        self._cmd.setToolTip(command_text)
+        self._shell.setText(shell if cmd else "")
+        self._meta.setText(meta)
         versions = entry.runtime_profile.get("versions", {})
-        self._runtime.setText(" · ".join(f"{family} {ref.get('version', '')}" for family, ref in versions.items())
-                              or "继承默认")
+        self._runtime.setText("运行环境：" + (" · ".join(
+            f"{family} {ref.get('version', '')}" for family, ref in versions.items()) or "继承默认"))
 
         self._runs.setText(str(stats.get("runs", 0)))
         self._last.setText(stats.get("last_run") or "—")
@@ -339,7 +607,7 @@ class DetailPanel(QFrame):
         if not self._entry:
             return
         dlg = CommandDialog(self._entry.command or "",
-                            self._entry.shell_type or DEFAULT_SHELL, self)
+                            self._entry.shell_type or DEFAULT_SHELL, self, self._entry)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             cmd, shell = dlg.result()
             self.commandEdited.emit(self._entry, cmd, shell)

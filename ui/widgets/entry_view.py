@@ -6,14 +6,48 @@ Spacing (§3.2): 8/12/16/24; radius 8; existing light/dark theme colors retained
 from __future__ import annotations
 
 from PySide6.QtCore import QAbstractListModel, QEvent, QModelIndex, QRect, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QTextLayout, QTextCharFormat
+from PySide6.QtCore import QPointF
+import re
 from PySide6.QtWidgets import QApplication, QListView, QStyle, QStyledItemDelegate, QAbstractItemView, QWidget
 
 from core.models import Entry
+from ui.misc import WRAP_FLAGS as WRAP
+from ui.misc import wrapped_text_height
+
+def draw_name(painter, rect, text, query, dark, center=False):
+    layout = QTextLayout(text, painter.font())
+    formats = []
+    for token in query.split():
+        if ':' in token: continue
+        for match in re.finditer(re.escape(token), text, re.IGNORECASE):
+            span = QTextLayout.FormatRange()
+            span.start, span.length = match.start(), match.end()-match.start()
+            style = QTextCharFormat()
+            style.setBackground(QColor('#346144' if dark else '#ccedd8'))
+            style.setForeground(QColor('#b4f5c9' if dark else '#185c32'))
+            style.setFontWeight(QFont.Weight.Bold)
+            span.format = style
+            formats.append(span)
+    layout.setFormats(formats)
+    layout.beginLayout()
+    height = 0
+    while True:
+        line = layout.createLine()
+        if not line.isValid(): break
+        line.setLineWidth(rect.width())
+        line.setPosition(QPointF(0, height))
+        height += line.height()
+    layout.endLayout()
+    y = rect.y() + (max(0, (rect.height()-height)/2) if center else 0)
+    layout.draw(painter, QPointF(rect.x(), y))
+
 
 ENTRY_ROLE = Qt.ItemDataRole.UserRole + 1
 GRID_SIZE = QSize(168, 104)
 LIST_SIZE = QSize(200, 48)
+GRID_ICON_AREA = 50  # 图标区高度；名称从这里开始
+GRID_BOTTOM_PAD = 10
 
 
 def list_columns(rect):
@@ -75,7 +109,15 @@ class EntryDelegate(QStyledItemDelegate):
         self.view, self.icon_for, self.dark = view, icon_for, dark
 
     def sizeHint(self, option, index):
-        return self.view.grid_cell_size if self.view.grid else LIST_SIZE
+        if self.view.grid:
+            return self.view.grid_cell_size
+        entry = index.data(ENTRY_ROLE)
+        font = QFont(option.font)
+        font.setWeight(QFont.Weight.Medium)
+        text = (("★ " if entry.pinned else "") + entry.name) if entry else ""
+        height = wrapped_text_height(text, self.view.viewport().width() - 88, font)
+        return QSize(max(LIST_SIZE.width(), self.view.viewport().width()),
+                     max(LIST_SIZE.height(), height + 16))
 
     def paint(self, painter: QPainter, option, index):
         entry = index.data(ENTRY_ROLE)
@@ -87,7 +129,6 @@ class EntryDelegate(QStyledItemDelegate):
         dark = self.dark()
         bg = QColor("#2b2f36" if dark else "#ffffff")
         ink = QColor("#e6e9ee" if dark else "#2b323d")
-        muted = QColor("#9aa3af" if dark else "#6b7380")
         accent = QColor("#5fd08e" if dark else "#287c4b")
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hover = bool(option.state & QStyle.StateFlag.State_MouseOver)
@@ -100,16 +141,15 @@ class EntryDelegate(QStyledItemDelegate):
         painter.setBrush(QColor("#2f5d43" if dark else "#e9f7ef") if selected else bg)
         painter.drawRoundedRect(rect, 8, 8)
         self.icon_for(entry).paint(painter, QRect(rect.x()+14, rect.y()+12, 28, 28))
-        left, top = rect.x()+14, rect.y()+50
+        left, top = rect.x()+14, rect.y()+GRID_ICON_AREA
         width = rect.width()-28
         font = QFont("Microsoft YaHei UI")
         font.setPixelSize(13)
         font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(font)
         painter.setPen(ink)
-        title = painter.fontMetrics().elidedText(entry.name, Qt.TextElideMode.ElideRight, width*2-16)
-        painter.drawText(QRect(left, top, width, 36),
-                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap, title)
+        draw_name(painter, QRect(left, top, width, max(1, rect.height()-GRID_ICON_AREA-GRID_BOTTOM_PAD)),
+                  entry.name, self.view.property("searchQuery") or "", dark)
         if hover or selected:
             action = launch_rect(option.rect)
             painter.setBrush(QColor("#2f5d43" if dark else "#e9f7ef"))
@@ -146,8 +186,7 @@ class EntryDelegate(QStyledItemDelegate):
         for column, text in zip(columns, texts):
             painter.setPen(QColor("#e6e9ee" if dark else "#2b323d") if column == columns[0]
                            else QColor("#9aa3af" if dark else "#6b7380"))
-            painter.drawText(column, Qt.AlignmentFlag.AlignVCenter,
-                             painter.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, column.width()))
+            draw_name(painter, column, text, self.view.property("searchQuery") or "", dark, center=True)
         painter.setPen(QColor(154, 163, 175, 24))
         painter.drawLine(columns[0].left(), rect.bottom()+1, rect.right(), rect.bottom()+1)
         if hovered or selected:
@@ -179,6 +218,7 @@ class EntryView(QListView):
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.setMouseTracking(True)
         self.setToolTip("双击或 Enter 启动 · 右侧箭头单击启动 · 右键更多操作")
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -195,6 +235,8 @@ class EntryView(QListView):
         self.setViewMode(QListView.ViewMode.IconMode if grid else QListView.ViewMode.ListMode)
         self.setMovement(QListView.Movement.Static)
         self.setWrapping(grid)
+        # List rows grow with wrapped names; grid cells share one computed height.
+        self.setUniformItemSizes(bool(grid))
         # Reserve the actual scrollbar width. AsNeeded makes QListView reserve
         # a style-metric width that can differ from the styled scrollbar.
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn if grid
@@ -213,15 +255,29 @@ class EntryView(QListView):
         # exactly divisible viewport does not unexpectedly wrap the last cell.
         available = max(1, width-1)
         columns = max(1, available // GRID_SIZE.width())
-        size = QSize(available // columns, GRID_SIZE.height())
-        if size != self.gridSize():
+        cell_width = available // columns
+        font = QFont("Microsoft YaHei UI")
+        font.setPixelSize(13)
+        font.setWeight(QFont.Weight.DemiBold)
+        title_height = max((wrapped_text_height(entry.name, cell_width-28, font)
+                            for entry in self.entries_model.entries),
+                           default=font.pixelSize())
+        # +8 covers the card's 3px top/bottom insets so the last line is never clipped.
+        height = max(GRID_SIZE.height(), GRID_ICON_AREA + title_height + GRID_BOTTOM_PAD + 8)
+        size = QSize(cell_width, height)
+        if size != self.grid_cell_size or size != self.gridSize():
             self.grid_cell_size = size
             self.setGridSize(size)
 
     def viewportEvent(self, event):
         result = super().viewportEvent(event)
-        if event.type() == QEvent.Type.Resize and getattr(self, "grid", False):
-            self._sync_grid_geometry()
+        if event.type() == QEvent.Type.Resize:
+            if getattr(self, "grid", False):
+                self._sync_grid_geometry()
+            else:
+                # List row heights depend on the viewport width; re-query
+                # delegates after a resize instead of keeping stale heights.
+                self.scheduleDelayedItemsLayout()
         return result
 
     def _context(self, pos):

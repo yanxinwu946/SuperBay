@@ -14,7 +14,7 @@ from core.models import DEFAULT_SHELL
 
 log = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 6
 
 # 版本号 → 升到该版本要执行的 SQL；以后改表结构就追加 4、5……，别动旧条目
 MIGRATIONS = {
@@ -42,6 +42,11 @@ MIGRATIONS = {
     ALTER TABLE meta ADD COLUMN admin INTEGER DEFAULT 0;
     """,
     4: "ALTER TABLE meta ADD COLUMN runtime_profile TEXT DEFAULT '{}'",
+    5: """
+    ALTER TABLE meta ADD COLUMN aliases TEXT DEFAULT '[]';
+    ALTER TABLE meta ADD COLUMN launch_plans TEXT DEFAULT '[]';
+    """,
+    6: "ALTER TABLE stats ADD COLUMN recent_hidden INTEGER DEFAULT 0",
 }
 
 
@@ -97,6 +102,12 @@ class DB:
     def set_runtime_profile(self, path: Path, profile: dict) -> None:
         self._set(path, "runtime_profile=?", json.dumps(profile, ensure_ascii=False))
 
+    def set_aliases(self, path: Path, aliases: list[str]) -> None:
+        self._set(path, "aliases=?", json.dumps(aliases, ensure_ascii=False))
+
+    def set_launch_plans(self, path: Path, plans: list[dict]) -> None:
+        self._set(path, "launch_plans=?", json.dumps(plans, ensure_ascii=False))
+
     @staticmethod
     def _profile(value: str | None) -> dict:
         try:
@@ -115,6 +126,8 @@ class DB:
             "last_args": row["last_args"] or "",
             "admin": bool(row["admin"]),
             "runtime_profile": DB._profile(row["runtime_profile"]),
+            "aliases": json.loads(row["aliases"] or "[]"),
+            "launch_plans": json.loads(row["launch_plans"] or "[]"),
         }
 
     def all_meta(self) -> dict[str, dict]:
@@ -159,9 +172,15 @@ class DB:
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._conn.execute(
             """INSERT INTO stats(path, runs, last_run) VALUES(?, 1, ?)
-               ON CONFLICT(path) DO UPDATE SET runs=runs+1, last_run=?""",
+               ON CONFLICT(path) DO UPDATE SET runs=runs+1, last_run=?, recent_hidden=0""",
             (str(path), now, now))
         self._conn.commit()
+
+    def clear_recent(self, paths) -> None:
+        """Hide recent membership without deleting counts or launch logs."""
+        with self._conn:
+            self._conn.executemany('UPDATE stats SET recent_hidden=1 WHERE path=?',
+                                   [(str(path),) for path in paths])
 
     def get_stats(self, path: Path) -> dict:
         """单条查询，供详情面板点击时调用。"""
@@ -174,5 +193,6 @@ class DB:
     def all_stats(self) -> dict[str, dict]:
         out = {}
         for row in self._conn.execute("SELECT * FROM stats"):
-            out[row["path"]] = {"runs": row["runs"], "last_run": row["last_run"] or ""}
+            out[row["path"]] = {"runs": row["runs"], "last_run": row["last_run"] or "",
+                                "recent_hidden": bool(row["recent_hidden"])}
         return out

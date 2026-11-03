@@ -21,10 +21,10 @@ EXCLUDE_EXE_HINTS = ("uninstall", "unins", "卸载", "setup", "update")
 
 
 def find_main_exe(folder: Path) -> Path | None:
-    """在目录里找主程序：同名 exe > 唯一候选 exe > None（交给打开目录）。"""
+    """在目录里找主程序：同名 exe/lnk > 唯一候选 > None（交给打开目录）。"""
     try:
         exes = [p for p in folder.iterdir()
-                if p.is_file() and p.suffix.lower() == ".exe"
+                if p.is_file() and p.suffix.lower() in {".exe", ".lnk"}
                 and not any(h in p.name.lower() for h in EXCLUDE_EXE_HINTS)]
     except OSError:
         return None
@@ -46,7 +46,7 @@ def _run_custom(shell_type: str, command: str, cwd: Path) -> None:
         _shell_execute_w("open", "cmd.exe", '/d /s /k "' + command + '"', cwd)
 
 
-def _shell_execute_w(verb: str, file: str, args: str | None, cwd: Path) -> None:
+def _shell_execute_w(verb: str, file: str, args: str | None, cwd: Path, show: int = 1) -> None:
     """ShellExecuteW 启动；返回值 ≤32 就是错误码，不抛异常。"""
     bundle = getattr(sys, "_MEIPASS", None)
     if bundle:
@@ -54,7 +54,7 @@ def _shell_execute_w(verb: str, file: str, args: str | None, cwd: Path) -> None:
         set_directory.argtypes = [ctypes.c_wchar_p]
         set_directory(None)
     try:
-        ret = ctypes.windll.shell32.ShellExecuteW(None, verb, file, args, str(cwd), 1)
+        ret = ctypes.windll.shell32.ShellExecuteW(None, verb, file, args, str(cwd), show)
     finally:
         if bundle:
             set_directory(bundle)
@@ -151,7 +151,43 @@ def launch(entry: Entry, command: str | None = None,
 
 def open_in_explorer(path: Path) -> None:
     """在资源管理器中打开（文件则定位到它）。"""
-    if path.is_dir():
-        os.startfile(str(path))
-    else:
-        subprocess.Popen(f'explorer /select,"{path}"')
+    path = Path(path).absolute()
+    if not path.exists():
+        raise FileNotFoundError(f"路径不存在：{path}")
+    if os.name != 'nt':
+        raise OSError('此操作需要 Windows 资源管理器')
+    # Ask the running Windows shell to open and activate the folder directly.
+    # Spawning explorer.exe hands off to an existing process and can lose focus.
+    import ctypes
+    from ctypes import wintypes
+    shell = ctypes.WinDLL('shell32', use_last_error=True)
+    ole = ctypes.OleDLL('ole32')
+    shell.SHParseDisplayName.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p), wintypes.DWORD, ctypes.c_void_p]
+    shell.SHParseDisplayName.restype = ctypes.c_long
+    shell.SHOpenFolderAndSelectItems.argtypes = [ctypes.c_void_p, wintypes.UINT,
+        ctypes.POINTER(ctypes.c_void_p), wintypes.DWORD]
+    shell.SHOpenFolderAndSelectItems.restype = ctypes.c_long
+    shell.ILFindLastID.argtypes = [ctypes.c_void_p]
+    shell.ILFindLastID.restype = ctypes.c_void_p
+    ole.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+    initialized = ole.CoInitialize(None)
+    folder = ctypes.c_void_p()
+    item = ctypes.c_void_p()
+    try:
+        directory = path if path.is_dir() else path.parent
+        result = shell.SHParseDisplayName(str(directory), None, ctypes.byref(folder), 0, None)
+        if result < 0: raise OSError(f'无法定位目录（{result:#x}）：{directory}')
+        children = None
+        count = 0
+        if not path.is_dir():
+            result = shell.SHParseDisplayName(str(path), None, ctypes.byref(item), 0, None)
+            if result < 0: raise OSError(f'无法定位文件（{result:#x}）：{path}')
+            children = (ctypes.c_void_p * 1)(shell.ILFindLastID(item))
+            count = 1
+        result = shell.SHOpenFolderAndSelectItems(folder, count, children, 0)
+        if result < 0: raise OSError(f'无法打开资源管理器（{result:#x}）')
+    finally:
+        if item.value: ole.CoTaskMemFree(item)
+        if folder.value: ole.CoTaskMemFree(folder)
+        if initialized >= 0: ole.CoUninitialize()

@@ -14,11 +14,32 @@ def apply_native_frame(window, dark: bool) -> None:
     def attribute(key, value):
         data = wintypes.DWORD(value)
         return dwm(hwnd, key, ctypes.byref(data), ctypes.sizeof(data))
-    if attribute(20, int(dark)) < 0:
-        attribute(19, int(dark))
-    attribute(33, 2)  # System rounded corners on supported Windows versions.
-    attribute(35, 0x0026211e if dark else 0x00ffffff)  # Native caption color.
-    attribute(36, 0x00eee9e6 if dark else 0x003d322b)
+    build = sys.getwindowsversion().build
+    # Windows 10 caches the caption until the window is mapped again, so a
+    # live theme switch needs one hide/show cycle. Windows 11 updates in place.
+    refresh = (build < 22000 and window.isVisible()
+               and getattr(window, "_native_frame_dark", dark) != dark)
+    was_maximized = window.isMaximized()
+    was_active = window.isActiveWindow()
+    if refresh:
+        window.hide()
+    # Immersive dark mode is the only caption switch Windows 10 understands.
+    attribute(20, int(dark))
+    attribute(19, int(dark))
+    if build >= 22000:
+        attribute(33, 2)  # System rounded corners.
+        attribute(35, 0x0026211e if dark else 0x00ffffff)  # Native caption color.
+        attribute(36, 0x00eee9e6 if dark else 0x003d322b)  # Caption text color.
+    # Mark before showing so the nested showEvent does not hide/show again.
+    window._native_frame_dark = dark
+    if refresh:
+        window.show()
+        if was_maximized:
+            window.showMaximized()
+        if was_active:
+            window.raise_()
+            window.activateWindow()
+    ctypes.windll.dwmapi.DwmFlush()
 
 
 def prepare_backdrop(window) -> None:

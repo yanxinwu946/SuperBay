@@ -1,5 +1,9 @@
 
 /* Shared control system. Colors resolve to the active existing theme palette. */
+#DetailTabs::pane { border: none; background: transparent; }
+#DetailTabs QTabBar::tab { padding: 9px 18px; color: @muted; background: transparent; border-bottom: 2px solid transparent; }
+#DetailTabs QTabBar::tab:selected { color: @text; border-bottom-color: #3cb56f; }
+#DetailTabs QScrollArea, #DetailTabs QScrollArea > QWidget > QWidget { background: transparent; }
 QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit, QTimeEdit, QDateTimeEdit {
     background: @surface; color: @text; border: 1px solid @border;
     border-radius: 8px; padding: 7px 32px 7px 12px; min-height: 20px;
@@ -88,3 +92,32 @@ QPlainTextEdit, QTextEdit { background: @surface; color: @text; border: 1px soli
 #ToolHistory::item, #ToolHealth::item { padding: 9px 10px; border: none; }
 #ToolHistory::item:selected, #ToolHealth::item:selected { background: @selection; color: @text; }
 #ToolHistory QHeaderView::section, #ToolHealth QHeaderView::section { background: @base; color: @muted; border: none; border-bottom: 1px solid @border; padding: 10px; font-weight: 500; }
+
+/* Launch editor: one command, one shell, with the resolved command line shown live. */
+#CmdDialogTitle { font-size: 18px; font-weight: 700; color: @text; }
+#CmdDialogHint { color: @muted; font-size: 12px; }
+#CmdFieldLabel { color: @text; font-size: 12px; font-weight: 600; }
+#CmdDialog QLineEdit { border-radius: 8px; padding: 7px 10px; }
+#CommandInput { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
+#CmdPreview {
+    background: @surface; color: @text; border: 1px solid @border; border-radius: 8px;
+    font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; padding: 9px 11px;
+}
+#Segmented { background: @base; border: 1px solid @border; border-radius: 9px; }
+#Segmented QPushButton {
+    background: transparent; color: @muted; border: none; border-radius: 7px;
+    padding: 4px 16px; font-size: 12px; min-height: 18px;
+}
+#Segmented QPushButton:hover { background: transparent; color: @text; }
+#Segmented QPushButton:checked { background: @surface; color: @text; font-weight: 600; }
+
+#LaunchCard { background: @base; border: 1px solid @border; border-radius: 10px; }
+#LaunchBadge { color: @muted; font-size: 10px; font-weight: 700; letter-spacing: 1px; }
+#LaunchBadge[tone="custom"] { color: #3cb56f; }
+#LaunchCmd { background: transparent; color: @text; font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
+#LaunchMeta { color: @muted; font-size: 11px; }
+#LaunchEditBtn {
+    background: @selection; color: @text; border: 1px solid transparent; border-radius: 6px;
+    padding: 3px 10px; font-size: 11px; font-weight: 600;
+}
+#LaunchEditBtn:hover { border-color: #3cb56f; }
