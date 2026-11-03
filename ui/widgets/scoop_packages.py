@@ -1,10 +1,12 @@
 """Installed user Scoop packages and explicit batch actions."""
 import json
+import os
 import re
-from PySide6.QtCore import Qt, QProcess, QProcessEnvironment
+from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLineEdit,
     QTreeWidget, QTreeWidgetItem, QPushButton, QPlainTextEdit, QLabel, QMessageBox, QComboBox, QProgressBar)
 from core.scoop import valid_root, scoop_script
+from ui.flowlayout import FlowLayout
 
 
 class ScoopPackagesDialog(QDialog):
@@ -12,6 +14,10 @@ class ScoopPackagesDialog(QDialog):
         super().__init__(parent)
         self.root = root
         self.last_request = None
+        self._ansi_pending = ""
+        self._pending_packages = []
+        self._batch_failed = False
+        self._cancelled = False
         self.setWindowTitle('Scoop 软件管理')
         self.resize(900, 620)
         layout = QVBoxLayout(self)
@@ -41,7 +47,7 @@ class ScoopPackagesDialog(QDialog):
         self.table.setRootIsDecorated(False)
         self.table.setSortingEnabled(True)
         layout.addWidget(self.table, 1)
-        row = QHBoxLayout()
+        row = FlowLayout(h_spacing=8, v_spacing=8)
         self.buttons = []
         for label, slot in [('全选可见', lambda: self.check(True)), ('取消勾选', lambda: self.check(False)),
                             ('刷新', self.refresh), ('检查更新', lambda: self.run('status')),
@@ -60,6 +66,10 @@ class ScoopPackagesDialog(QDialog):
         self.retry.setEnabled(False)
         self.retry.clicked.connect(self.retry_last)
         feedback.addWidget(self.retry)
+        self.cancel_button = QPushButton('中断操作')
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self.cancel_operation)
+        feedback.addWidget(self.cancel_button)
         self.log_toggle = QPushButton('显示日志')
         self.log_toggle.setCheckable(True)
         self.log_toggle.toggled.connect(self.toggle_log)
@@ -70,6 +80,7 @@ class ScoopPackagesDialog(QDialog):
         self.progress.hide()
         layout.addWidget(self.progress)
         self.status = QLabel('冻结后 Scoop 将跳过该软件的常规更新。')
+        self.status.setWordWrap(True)
         layout.addWidget(self.status)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
@@ -80,8 +91,11 @@ class ScoopPackagesDialog(QDialog):
         self.process = QProcess(self)
         self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         self.process.readyReadStandardOutput.connect(self.read_output)
-        self.process.finished.connect(self.finished)
+        self.process.finished.connect(self.process_finished)
         self.process.errorOccurred.connect(self.error)
+        self.kill_timer = QTimer(self)
+        self.kill_timer.setSingleShot(True)
+        self.kill_timer.timeout.connect(self.force_stop)
         self.search.textChanged.connect(self.filter)
         self.refresh()
 
@@ -101,8 +115,12 @@ class ScoopPackagesDialog(QDialog):
             if package.name == 'scoop': continue
             current = package / 'current'
             try:
-                info = json.loads((current / 'install.json').read_text(encoding='utf-8-sig'))
-                manifest = json.loads((current / 'manifest.json').read_text(encoding='utf-8-sig'))
+                info_path = current / 'scoop-install.json'
+                if not info_path.is_file(): info_path = current / 'install.json'
+                manifest_path = current / 'scoop-manifest.json'
+                if not manifest_path.is_file(): manifest_path = current / 'manifest.json'
+                info = json.loads(info_path.read_text(encoding='utf-8-sig'))
+                manifest = json.loads(manifest_path.read_text(encoding='utf-8-sig'))
             except (OSError, ValueError): continue
             held = bool(info.get('hold'))
             item = QTreeWidgetItem([package.name, str(manifest.get('version', current.resolve().name)),
@@ -178,37 +196,105 @@ class ScoopPackagesDialog(QDialog):
         self.progress.show()
         self.log_toggle.setChecked(True)
         self.log.clear()
+        self._ansi_pending = ""
         env = QProcessEnvironment.systemEnvironment()
         env.insert('SCOOP', str(self.root))
         self.process.setProcessEnvironment(env)
         self.process.setWorkingDirectory(str(self.root))
         self.process.setProgram('powershell.exe')
-        self.process.setArguments(['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-                                   '-File', str(scoop_script(self.root)), action, *packages])
-        names = '全部软件' if packages == ['*'] else '、'.join(packages)
+        # Some Scoop versions stop their unhold pipeline when an app is already unheld.
+        # Run each unhold independently so one package cannot skip the rest.
+        self._pending_packages = list(packages) if action == 'unhold' else []
+        self._batch_failed = False
+        self._cancelled = False
+        self.cancel_button.setEnabled(True)
+        first = [self._pending_packages.pop(0)] if self._pending_packages else packages
+        self._set_process_arguments(action, first)
+        names = '全部软件' if packages == ['*'] else f'{len(packages)} 个软件'
         self.status.setText(('正在检查更新，结果显示在日志中…' if action == 'status' else f'正在执行 {action}：{names}'))
         for button in self.buttons: button.setEnabled(False)
         self.table.setEnabled(False)
         self.process.start()
 
+    def cancel_operation(self):
+        if not self.busy(): return
+        self._cancelled = True
+        self._pending_packages.clear()
+        self.cancel_button.setEnabled(False)
+        self.status.setText('正在中断，已完成的操作会保留…')
+        if os.name == 'nt':
+            started, _ = QProcess.startDetached('taskkill.exe', ['/PID', str(self.process.processId()), '/T', '/F'])
+            if not started: self.process.kill()
+        else:
+            self.process.terminate()
+        self.kill_timer.start(3000)
+
+    def force_stop(self):
+        if self.busy(): self.process.kill()
+
+    def _set_process_arguments(self, action, packages):
+        self.process.setArguments(['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                                   '-File', str(scoop_script(self.root)), action, *packages])
+
     def read_output(self):
         data = bytes(self.process.readAllStandardOutput())
         try: text = data.decode('utf-8')
         except UnicodeDecodeError: text = data.decode('mbcs', errors='replace')
+        text = self._ansi_pending + text
+        self._ansi_pending = ""
+        incomplete = re.search(r"\x1b(?:\[[0-?]*[ -/]*)?$", text)
+        if incomplete:
+            self._ansi_pending = text[incomplete.start():]
+            text = text[:incomplete.start()]
+        text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
         self.log.moveCursor(self.log.textCursor().MoveOperation.End)
         self.log.insertPlainText(text)
 
-    def finished(self, code, status):
+    def _remaining_packages(self, action, requested):
+        expected = action == 'hold'
+        states = {self.table.topLevelItem(i).text(0): bool(self.table.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole))
+                  for i in range(self.table.topLevelItemCount())}
+        return [name for name in requested if name not in states or states[name] != expected]
+
+    def process_finished(self, code, status):
+        self.kill_timer.stop()
         self.read_output()
+        self._batch_failed |= code != 0 or status != QProcess.ExitStatus.NormalExit
+        if self._pending_packages:
+            self._set_process_arguments('unhold', [self._pending_packages.pop(0)])
+            self.process.start()
+            return
         self.progress.hide()
-        self.retry.setEnabled(code != 0 or status != QProcess.ExitStatus.NormalExit)
+        self.cancel_button.setEnabled(False)
+        self.retry.setEnabled(self._batch_failed or self._cancelled)
         for button in self.buttons: button.setEnabled(True)
         self.table.setEnabled(True)
         self.refresh()
-        self.status.setText('命令已完成，请查看日志及冻结状态。' if code == 0 and status == QProcess.ExitStatus.NormalExit else '操作未完成，请查看日志。')
+        success = not self._batch_failed
+        if self._cancelled:
+            if self.last_request and self.last_request[0] in {'hold', 'unhold'}:
+                action, requested = self.last_request
+                remaining = self._remaining_packages(action, requested)
+                self.last_request = (action, remaining)
+                self.retry.setEnabled(bool(remaining))
+                self.status.setText(f'操作已中断，状态已刷新；{len(remaining)} 项尚未达到预期状态。')
+            else:
+                self.status.setText('操作已中断，状态已刷新；已完成的操作会保留。')
+            return
+        if self.last_request and self.last_request[0] in {'hold', 'unhold'}:
+            action, requested = self.last_request
+            failed = self._remaining_packages(action, requested)
+            if failed:
+                self.last_request = (action, failed)
+                self.retry.setEnabled(True)
+                self.status.setText(f'以下软件未达到预期状态：{"、".join(failed)}。请查看日志并重试。')
+                return
+        self.status.setText('命令已完成，状态已刷新。' if success else '操作未完成，请查看日志。')
 
     def error(self, error):
         if error == QProcess.ProcessError.FailedToStart:
+            self._pending_packages.clear()
+            self.cancel_button.setEnabled(False)
             self.progress.hide()
             self.retry.setEnabled(True)
             for button in self.buttons: button.setEnabled(True)

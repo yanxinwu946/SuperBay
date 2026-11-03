@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from core.launch_history import start
 from core.models import Entry
-from core.terminal import is_gui_exe, terminal_argv
+from core.terminal import is_gui_exe, terminal_argv, launch_terminal, CREATE_NEW_CONSOLE
 
 
 @unittest.skipUnless(sys.platform == "win32", "Windows terminal conventions")
@@ -25,6 +25,14 @@ class TerminalTests(unittest.TestCase):
         path = self.root / name
         path.write_bytes(b"")
         return path
+
+    def test_empty_terminal_opens_system_console(self):
+        with patch("core.terminal.subprocess.Popen") as process:
+            launch_terminal("  ", "", self.root, ["cmd.exe", "/k"])
+        process.assert_called_once_with(["cmd.exe", "/k"], cwd=str(self.root),
+                                        creationflags=CREATE_NEW_CONSOLE, close_fds=True)
+        with self.assertRaisesRegex(RuntimeError, "未配置终端"):
+            terminal_argv("", "", self.root, ["cmd.exe"])
 
     def test_known_terminals_and_generic_fallback(self):
         command = ["cmd.exe", "/d", "/s", "/k", "echo hi"]

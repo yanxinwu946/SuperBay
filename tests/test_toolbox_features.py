@@ -31,6 +31,18 @@ class ToolboxFeatures(unittest.TestCase):
         self.assertTrue(all(e.path.is_relative_to(roots[0]) for c in categories for e in c.entries))
         nested=scan_roots([roots[0],roots[0]])
         self.assertEqual(sum(len(c.entries) for c in nested),1)
+    def test_clear_selected_unknown_preserves_active_records(self):
+        from core.launch_history import clear_history
+        folder = self.root / 'launches'; folder.mkdir()
+        unknown, running = 'a' * 32, 'b' * 32
+        for ident, state in [(unknown, 'unknown'), (running, 'running')]:
+            (folder / (ident + '.status.json')).write_text(json.dumps(
+                {'id': ident, 'state': state, 'started': time.time(), 'pid': 123}), encoding='utf-8')
+        with patch('core.launch_history.alive', return_value=True):
+            self.assertEqual(clear_history(folder, {unknown}), (0, 1))
+            self.assertEqual(clear_history(folder, {unknown, running}, include_unknown=True), (1, 1))
+        self.assertTrue((folder / (running + '.status.json')).exists())
+
     def test_detection_ambiguity_and_missing_interpreter(self):
         folder=self.root/'tool';folder.mkdir();(folder/'main.py').write_text('pass')
         entry=self.entry(folder);self.assertIn('python -u',suggestions(entry)[0][1])

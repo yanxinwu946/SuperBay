@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QFileIconProvider,
     QFrame,
     QHBoxLayout,
+    QGridLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -53,12 +54,10 @@ from ui.misc import (
     ICON_COLOR,
     SVG_GRID,
     SVG_LIST,
-    SVG_MOON,
     SVG_PANEL,
     SVG_REFRESH,
     SVG_SEARCH,
     SVG_SETTINGS,
-    SVG_SUN,
     make_logo_icon,
     svg_icon,
 )
@@ -218,22 +217,36 @@ class MainWindow(QMainWindow):
         bar = QFrame()
         bar.setObjectName("TopBar")
         bar.setFixedHeight(56)
-        lay = QHBoxLayout(bar)
-        lay.setContentsMargins(14, 0, 14, 0)
+        grid = QGridLayout(bar)
+        grid.setContentsMargins(14, 0, 14, 0)
+        grid.setHorizontalSpacing(8)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(2, 1)
+        left = QWidget()
+        left_layout = QHBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        right = QWidget()
+        lay = QHBoxLayout(right)
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
+        lay.addStretch(1)
 
         brand = QLabel("SuperBay")
         brand.setObjectName("Brand")
-        lay.addWidget(brand)
+        left_layout.addWidget(brand)
+        grid.addWidget(left, 0, 0)
+        grid.addWidget(self._make_search_box(), 0, 1)
+        grid.addWidget(right, 0, 2)
 
         self._workspace_selector = QComboBox()
         self._workspace_selector.setObjectName("WorkspaceSelector")
         self._workspace_selector.setFixedHeight(36)
         self._workspace_selector.setMinimumWidth(144)
-        self._workspace_selector.setMaximumWidth(420)
+        self._workspace_selector.setMaximumWidth(180)
         self._workspace_selector.setToolTip("目录快捷入口 · 一次打开一个目录")
         self._workspace_selector.currentIndexChanged.connect(self._switch_workspace_by_index)
-        lay.addWidget(self._workspace_selector)
+        left_layout.addWidget(self._workspace_selector)
+        left_layout.addStretch(1)
         self._refresh_workspace_buttons()
 
         runtime_btn = QPushButton("运行环境")
@@ -246,9 +259,11 @@ class MainWindow(QMainWindow):
         manage_btn.clicked.connect(self._show_tool_center)
         lay.addWidget(manage_btn)
 
-        lay.addStretch(1)
-        lay.addWidget(self._make_search_box(), 1)
-        lay.addStretch(1)
+        quick = QPushButton("快速启动")
+        self._quick_start = quick
+        quick.setToolTip("快速启动")
+        quick.clicked.connect(self._open_palette)
+        lay.addWidget(quick)
 
         self._grid_btn = self._top_icon_btn(SVG_GRID, "网格视图", checkable=True)
         self._list_btn = self._top_icon_btn(SVG_LIST, "列表视图", checkable=True)
@@ -260,24 +275,18 @@ class MainWindow(QMainWindow):
         self._view_group.setExclusive(True)
         self._view_group.addButton(self._grid_btn)
         self._view_group.addButton(self._list_btn)
-        lay.addWidget(self._grid_btn)
-        lay.addWidget(self._list_btn)
-
-        cur_theme = resolve_theme(self.settings.get("theme", "system"))
-        self._theme_btn = self._top_icon_btn(
-            SVG_SUN if cur_theme == "dark" else SVG_MOON, "外观主题")
-        self._theme_btn.clicked.connect(self._show_theme_menu)
 
         self._panel_btn = self._top_icon_btn(SVG_PANEL, "折叠/展开详情面板 (Ctrl+B)",
                                              checkable=True)
         self._panel_btn.setChecked(self.settings.get("detail_visible", False))
         self._panel_btn.clicked.connect(self._toggle_panel)
-        lay.addWidget(self._panel_btn)
 
-        organize = QPushButton("整理工具")
+        organize = QPushButton("文件管理")
+        organize.setToolTip("文件管理 · Ctrl+Shift+M")
+        QShortcut(QKeySequence('Ctrl+Shift+M'), self, activated=self._manage_files)
         organize.setObjectName("GhostBtn")
         organize.clicked.connect(self._manage_files)
-        lay.insertWidget(4, organize)
+        lay.addWidget(organize)
 
         refresh_btn = self._top_icon_btn(SVG_REFRESH, "重新扫描 (F5)")
         refresh_btn.clicked.connect(self.reload)
@@ -287,7 +296,6 @@ class MainWindow(QMainWindow):
         separator.setFixedHeight(20)
         separator.setObjectName('ToolbarDivider')
         lay.addWidget(separator)
-        lay.addWidget(self._theme_btn)
 
         set_btn = self._top_icon_btn(SVG_SETTINGS, "设置")
         set_btn.clicked.connect(self._show_settings)
@@ -391,7 +399,7 @@ class MainWindow(QMainWindow):
             '快速启动': 'M9 1 3 9h4l-1 6 7-9H9Z',
             '运行环境': 'M2 3h12v10H2ZM4 6l2 2-2 2m4 0h3',
             '工具管理': 'M2 5h12v9H2ZM5 5V2h6v3M2 8h12M7 8v2h2V8',
-            '整理工具': 'M2 4h5l2 2h5v8H2ZM5 10h6m-3-2v4',
+            '文件管理': 'M2 4h5l2 2h5v8H2ZM5 10h6m-3-2v4',
             '清空最近': 'M3 4h10M6 4V2h4v2M4 4l1 10h6l1-10M7 7v4m2-4v4',
             '清除筛选': 'M2 3h12l-5 6v4l-2 1V9ZM10 10l4 4m0-4-4 4',
         }
@@ -430,6 +438,7 @@ class MainWindow(QMainWindow):
                                   (self._forward_btn, '前进 · Alt+Right', lambda: self._history_move(True)),
                                   (self._up_btn, '上一级 · Alt+Up', self._navigate_up)):
             button.setObjectName('GhostBtn')
+            button.setProperty('navigationControl', True)
             button.setFixedSize(28, 28)
             button.setFlat(True)
             button.setToolTip(tip)
@@ -459,10 +468,6 @@ class MainWindow(QMainWindow):
         header.addWidget(self._title)
         header.addWidget(self._count_lbl)
         header.addStretch(1)
-        quick = QPushButton("快速启动")
-        self._quick_start = quick
-        quick.setObjectName("GhostBtn")
-        quick.clicked.connect(self._open_palette)
         # §2.1/§3.6: one compact toolbar reserves space for results.
         filters = header
         self._kind_filter = QComboBox()
@@ -477,7 +482,9 @@ class MainWindow(QMainWindow):
         self.sort_order = self._sort_filter.currentData()
         self._sort_filter.currentIndexChanged.connect(self._filter_changed)
         filters.addWidget(self._sort_filter)
-        filters.addWidget(quick)
+        filters.addWidget(self._grid_btn)
+        filters.addWidget(self._list_btn)
+        filters.addWidget(self._panel_btn)
         self._clear_recent_btn = QPushButton("清空最近")
         self._clear_recent_btn.setObjectName("GhostBtn")
         self._clear_recent_btn.clicked.connect(self._clear_recent)
@@ -1122,10 +1129,10 @@ class MainWindow(QMainWindow):
             event.acceptProposedAction()
             self._manage_files(paths)
 
-    def _manage_files(self, paths=None):
+    def _manage_files(self, paths=None, entry=None):
         if not self._detail.confirm_leave(): return
-        from ui.widgets.file_manager import FileManagerDialog
-        dialog = FileManagerDialog(self.workspace, self.categories, self.entries, self.db, self)
+        from ui.widgets.file_manager import UnifiedFileManager
+        dialog = UnifiedFileManager(self.workspace, self.categories, self.entries, self.db, self.settings, self, entry)
         if isinstance(paths, list):
             QTimer.singleShot(0, lambda: dialog.import_items(paths))
         # Delay scans until the filesystem and metadata operation has completed.
@@ -1138,9 +1145,7 @@ class MainWindow(QMainWindow):
         if dialog.changed: self.reload()
 
     def _browse_files(self, entry):
-        from ui.widgets.file_manager import ToolFilesDialog
-        ToolFilesDialog(entry, self.settings, self).exec()
-        self.reload()
+        self._manage_files(entry=entry)
 
     def _clear_recent(self):
         entries = [e for e in self.entries if e.runs > 0 and not e.recent_hidden]
@@ -1231,7 +1236,7 @@ class MainWindow(QMainWindow):
         manage.addAction('浏览文件…', lambda: self._browse_files(entry))
         manage.addAction('编辑搜索别名…', lambda: self._edit_aliases(entry))
         manage.addAction('编辑标签…', lambda: self._detail._edit_tags())
-        manage.addAction('整理工具…', self._manage_files)
+        manage.addAction('文件管理…', self._manage_files)
         manage.addAction('检查工具…', lambda: self._check_entry(entry))
         more = menu.addMenu('更多')
         more.addAction('打开上级文件夹', lambda: self._open_entry_folder(entry, parent=True))
@@ -1384,27 +1389,12 @@ class MainWindow(QMainWindow):
         self.settings.set("theme", theme)
         apply_theme(QApplication.instance(), self.app_dir, theme)
         self._applied_theme = resolve_theme(theme)
-        dark = self._applied_theme == "dark"
-        self._theme_btn.setIcon(svg_icon(SVG_SUN if dark else SVG_MOON, ICON_COLOR))
-        modes = {"system": "跟随系统", "light": "浅色", "dark": "深色"}
-        self._theme_btn.setToolTip(
-            f"外观主题：{modes.get(theme, '跟随系统')}（当前{'深色' if dark else '浅色'}）")
         self._browser.viewport().update()
         self._sidebar.update()
         self._detail.update()
         if self.centralWidget():
             self.centralWidget().update()
         self._apply_native_frame()
-
-    def _show_theme_menu(self) -> None:
-        menu = QMenu(self)
-        current = self.settings.get("theme", "system")
-        for value, label in (("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")):
-            action = menu.addAction(label)
-            action.setCheckable(True)
-            action.setChecked(current == value)
-            action.triggered.connect(lambda _=False, v=value: self._apply_theme(v))
-        menu.exec(self._theme_btn.mapToGlobal(self._theme_btn.rect().bottomLeft()))
 
     def _sync_system_theme(self) -> None:
         """「跟随系统」时，系统亮暗切换后自动重载主题。"""
@@ -1659,9 +1649,6 @@ class MainWindow(QMainWindow):
             return
         e.ignore()
         self.hide()
-        hotkey = self.settings.get("hotkey", "Ctrl+Alt+K")
-        self._tray.showMessage("SuperBay", f"已最小化到托盘，{hotkey} 可唤起",
-                               QSystemTrayIcon.MessageIcon.Information, 2000)
 
     def _set_status(self, text: str, ok: bool = True) -> None:
         self._status_ok.setText(("● " if ok else "✕ ") + text)

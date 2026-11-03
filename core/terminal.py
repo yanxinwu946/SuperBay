@@ -9,6 +9,7 @@ import shutil
 from pathlib import Path
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
 
 
 def _quoted(path: Path) -> str:
@@ -87,7 +88,9 @@ def gui_command(command: str, cwd: Path, environment=None, shell='cmd'):
 
 def terminal_argv(terminal: str, template: str, cwd: Path, command: list[str]) -> tuple[str, str]:
     """返回 (终端程序, 参数)；终端由 launch_terminal 隐藏控制台启动。"""
-    path = _resolve_shim(Path(terminal).expanduser())
+    if not terminal or not terminal.strip():
+        raise RuntimeError("未配置终端程序。")
+    path = _resolve_shim(Path(terminal.strip()).expanduser())
     if not path.is_file():
         raise RuntimeError(f"终端程序不存在：{terminal}")
     text = template.strip()
@@ -111,6 +114,13 @@ def terminal_argv(terminal: str, template: str, cwd: Path, command: list[str]) -
 
 def launch_terminal(terminal: str, template: str, cwd: Path, command: list[str]) -> None:
     """启动终端且不留下启动器自己的控制台窗口。"""
+    if not terminal or not terminal.strip():
+        try:
+            subprocess.Popen(command, cwd=str(cwd), creationflags=CREATE_NEW_CONSOLE,
+                             close_fds=True)
+        except OSError as error:
+            raise RuntimeError(f"无法启动系统控制台：{error}") from error
+        return
     target, arguments = terminal_argv(terminal, template, cwd, command)
     line = subprocess.list2cmdline([target])
     if arguments:

@@ -85,6 +85,36 @@ class ScoopTests(unittest.TestCase):
         dialog.reject()
         dialog.deleteLater()
 
+    def test_package_hold_checks_actual_state(self):
+        import json
+        from PySide6.QtCore import QProcess
+        from ui.widgets.scoop_packages import ScoopPackagesDialog
+        current = self.root / 'apps/python/current'
+        current.mkdir()
+        (current / 'install.json').write_text(json.dumps({'hold': True}))
+        (current / 'manifest.json').write_text(json.dumps({'version': '3.12'}))
+        (current / 'scoop-install.json').write_text(json.dumps({'hold': True}))
+        dialog = ScoopPackagesDialog(self.root)
+        dialog.last_request = ('hold', ['python'])
+        dialog.process_finished(0, QProcess.ExitStatus.NormalExit)
+        self.assertIn('命令已完成', dialog.status.text())
+        self.assertFalse(dialog.retry.isEnabled())
+        (current / 'scoop-install.json').write_text(json.dumps({'hold': False}))
+        dialog.last_request = ('hold', ['python'])
+        dialog.process_finished(0, QProcess.ExitStatus.NormalExit)
+        self.assertIn('未达到预期状态', dialog.status.text())
+        self.assertTrue(dialog.retry.isEnabled())
+        dialog.deleteLater()
+
+    def test_package_log_removes_split_ansi_sequences(self):
+        from ui.widgets.scoop_packages import ScoopPackagesDialog
+        dialog = ScoopPackagesDialog(self.root)
+        with patch.object(dialog.process, 'readAllStandardOutput', side_effect=[b'\x1b[3', b'4mJAVA_HOME\x1b[0m']):
+            dialog.read_output()
+            dialog.read_output()
+        self.assertEqual(dialog.log.toPlainText(), 'JAVA_HOME')
+        dialog.deleteLater()
+
     def test_invalid_root(self):
         with self.assertRaises(ValueError):
             scoop.scan(self.root / "missing", self.env)

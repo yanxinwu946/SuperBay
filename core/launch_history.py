@@ -142,7 +142,7 @@ def history(folder):
     return sorted(records,key=lambda r:r['started'],reverse=True)
 
 
-def clear_history(folder, identifiers=None):
+def clear_history(folder, identifiers=None, *, include_unknown=False):
     """Delete completed launch artifacts only; never touch tool metadata."""
     import re
     root = Path(folder).resolve()
@@ -151,7 +151,7 @@ def clear_history(folder, identifiers=None):
         identifier = record.get('id', '')
         if identifiers is not None and identifier not in identifiers: continue
         if not re.fullmatch(r'[0-9a-f]{32}', identifier): continue
-        if record.get('state') in {'starting', 'running', 'unknown'}:
+        if record.get('state') in {'starting', 'running'} or (record.get('state') == 'unknown' and not include_unknown):
             skipped += 1
             continue
         files = [root / (identifier + suffix) for suffix in ('.log', '.json', '.status.json')]

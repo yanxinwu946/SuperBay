@@ -201,11 +201,17 @@ class ToolCenter(QDialog):
     def clear_logs(self, all_finished):
         item = self.history.currentItem()
         if not all_finished and item is None: return
+        record = item.data(0, Qt.ItemDataRole.UserRole) if item else None
+        unknown = bool(not all_finished and record.get('state') == 'unknown')
         text = '清理全部已结束的启动记录及其日志？' if all_finished else '清理所选启动记录及其日志？'
-        if QMessageBox.question(self, '清理运行记录', text + '\n正在运行、启动中和状态未知的记录会保留。') != QMessageBox.StandardButton.Yes: return
+        if unknown:
+            text += '\n该记录状态未知，清理会删除日志；如果启动仍在等待确认，可能影响该次启动。'
+        else:
+            text += '\n正在运行、启动中和状态未知的记录会保留。'
+        if QMessageBox.question(self, '清理运行记录', text) != QMessageBox.StandardButton.Yes: return
         ids = None if all_finished else {item.data(0, Qt.ItemDataRole.UserRole)['id']}
         try:
-            removed, skipped = launch_history.clear_history(self.main.app_dir/'config/launches', ids)
+            removed, skipped = launch_history.clear_history(self.main.app_dir/'config/launches', ids, include_unknown=unknown)
             self.output.clear()
             self.refresh()
             QMessageBox.information(self, '清理完成', f'已清理 {removed} 条，保留 {skipped} 条活动或状态未知记录。')

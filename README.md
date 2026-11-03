@@ -33,7 +33,7 @@ python -m venv .venv
 
 已有 Python 环境也可安装依赖后运行 `python main.py`，或双击 `start.vbs`（使用系统 Python）。
 
-首次启动选择工具目录：一级文件夹作为分类，分类内的文件与文件夹作为工具条目。添加工具后自动更新，也可按 `F5` 刷新。
+首次启动选择工具目录。分类可嵌套，工具项目会保持完整；添加工具后自动更新，也可按 `F5` 刷新。按个人需求规划目录可参考 [目录规划指南](docs/directory-planning.md)。
 
 ## 常用操作
 
@@ -76,7 +76,7 @@ python tools/benchmark.py --help
 | `tests/`、`tools/` | 自动测试与性能工具 |
 | `docs/` | 使用说明与开发资料 |
 
-[使用说明与目录命名](docs/user-guide.md) · [使用与配置](docs/reference.md) · [工具工作台](docs/toolbox-features.md) · [开发与性能](docs/modernization.md)
+[使用说明与目录命名](docs/user-guide.md) · [使用与配置](docs/reference.md) · [工具工作台](docs/toolbox-features.md) · [打包说明](docs/packaging.md)
 
 ## 许可证
 

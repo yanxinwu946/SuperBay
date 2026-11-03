@@ -116,3 +116,17 @@ QPushButton#MiniBtn:hover { background: @selection; }
 QPushButton#MiniBtn:pressed { background: @selection; }
 #DetailPanel QPushButton#PrimaryBtn, #DetailPanel QPushButton#GhostBtn { min-height: 22px; padding: 8px 12px; font-size: 13px; border-radius: 8px; }
 QPushButton#GhostBtn:disabled, QPushButton#MiniBtn:disabled, QPushButton#PrimaryBtn:disabled { color: @muted; background: @base; border-color: transparent; }
+
+/* Directory navigation: keep hover and keyboard focus visible. */
+QPushButton#ActionIconButton[navigationControl="true"]:hover {
+    background: @selection; border: 1px solid @primary;
+}
+QPushButton#ActionIconButton[navigationControl="true"]:focus {
+    background: @selection; border: 1px solid @primary;
+}
+QPushButton#ActionIconButton[navigationControl="true"]:pressed {
+    background: @selection; border: 1px solid @primary;
+}
+QPushButton#ActionIconButton[navigationControl="true"]:disabled {
+    background: transparent; border: 1px solid transparent;
+}

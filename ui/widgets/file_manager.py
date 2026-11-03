@@ -4,9 +4,10 @@ from PySide6.QtCore import Qt, QThread, Signal, QDir
 from PySide6.QtWidgets import QFileSystemModel
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QTreeWidget, QTreeWidgetItem, QAbstractItemView,
-    QFileDialog, QInputDialog, QMessageBox, QTreeView, QPlainTextEdit, QSplitter, QCheckBox, QMenu, QApplication, QComboBox)
+    QFileDialog, QInputDialog, QMessageBox, QTreeView, QPlainTextEdit, QSplitter, QCheckBox, QMenu, QApplication, QComboBox, QTabWidget)
 from core.file_management import inside, valid_name, relocate, import_paths
 from core import launcher
+from ui.flowlayout import FlowLayout
 
 
 class ImportThread(QThread):
@@ -27,12 +28,14 @@ class ImportThread(QThread):
 
 
 class ToolFilesDialog(QDialog):
-    def __init__(self, entry, settings, parent=None):
+    def __init__(self, entry, settings, parent=None, db=None):
         super().__init__(parent)
         self.setWindowTitle(f'文件 · {entry.name}')
         self.resize(950, 650)
         self.root = entry.path if entry.is_dir else entry.path.parent
         self.settings = settings
+        self.db = db if db is not None else getattr(parent, 'db', None)
+        self.changed = False
         self.current_directory = self.root
         layout = QVBoxLayout(self)
         self.path_label = QLabel(str(self.root))
@@ -66,6 +69,9 @@ class ToolFilesDialog(QDialog):
         self.preview = QPlainTextEdit(); self.preview.setReadOnly(True)
         self.preview.setPlaceholderText('选择文本文件预览；最多读取前 64 KB。')
         split.addWidget(self.tree); split.addWidget(self.preview)
+        split.setStretchFactor(0, 7)
+        split.setStretchFactor(1, 3)
+        split.setSizes([700, 300])
         layout.addWidget(split, 1)
         search.textChanged.connect(lambda value: self.model.setNameFilters([value] if value else []))
         self.tree.selectionModel().currentChanged.connect(self.show_preview)
@@ -158,6 +164,7 @@ class ToolFilesDialog(QDialog):
             if directory: target.mkdir()
             else:
                 with target.open('x', encoding='utf-8'): pass
+            self.changed = True
             self.refresh_files()
         except (OSError, ValueError) as error:
             QMessageBox.warning(self, '未完成', str(error))
@@ -172,10 +179,9 @@ class ToolFilesDialog(QDialog):
             source = inside(self.root, path)
             target = inside(self.root, path.with_name(valid_name(name)))
             if target.exists(): raise ValueError('目标名称已存在')
-            parent = self.parent()
-            db = getattr(parent, 'db', None)
-            if db is not None: relocate(db, self.root, [(source, target)])
+            if self.db is not None: relocate(self.db, self.root, [(source, target)])
             else: source.rename(target)
+            self.changed = True
             self.refresh_files()
         except (OSError, ValueError) as error:
             QMessageBox.warning(self, '未完成', str(error))
@@ -237,7 +243,7 @@ class ToolFilesDialog(QDialog):
 class FileManagerDialog(QDialog):
     def __init__(self, root, categories, entries, db, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('整理工具')
+        self.setWindowTitle('文件管理')
         self.resize(920, 650)
         self.root, self.categories, self.entries, self.db = Path(root), categories, entries, db
         self.worker = None
@@ -250,8 +256,10 @@ class FileManagerDialog(QDialog):
         self.skip_dependencies.setChecked(True)
         self.skip_dependencies.setToolTip('保留源码、package.json 和锁文件。需要直接使用已安装依赖时，请使用目录快捷入口，或取消此选项完整复制。')
         layout.addWidget(self.skip_dependencies)
-        search = QLineEdit(); search.setPlaceholderText('筛选名称或路径')
+        search = QLineEdit(); search.setPlaceholderText('搜索名称或路径')
+        search.setClearButtonEnabled(True)
         search.textChanged.connect(self.filter); layout.addWidget(search)
+        self.search = search
         self.tree = QTreeWidget(); self.tree.setObjectName("ToolHealth"); self.tree.setHeaderLabels(['工具 / 分类', '路径', '标签'])
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setRootIsDecorated(False); self.tree.setColumnWidth(0, 230); self.tree.setColumnWidth(1, 430)
@@ -262,13 +270,40 @@ class FileManagerDialog(QDialog):
                 self.add_row(category.path, '分类', None); seen.add(category.path)
         for entry in entries:
             if entry.path not in seen: self.add_row(entry.path, ', '.join(entry.tags), entry)
-        row = QHBoxLayout()
+        self.selection_hint = QLabel('选择条目后可重命名、移动或添加标签。')
+        layout.addWidget(self.selection_hint)
+        self.tree.itemSelectionChanged.connect(self.update_selection)
+        row = FlowLayout(h_spacing=8, v_spacing=8)
         self.buttons = []
         for name, slot in [('导入文件', self.import_files), ('导入文件夹', self.import_folder),
                            ('新建分类', self.new_category), ('重命名', self.rename),
                            ('移动到分类', self.move), ('批量标签', self.tags)]:
             button = QPushButton(name); button.clicked.connect(slot); row.addWidget(button); self.buttons.append(button)
         layout.addLayout(row)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self.context_menu)
+        self.update_selection()
+
+    def update_selection(self):
+        selected = self.selected()
+        count = len(selected)
+        self.selection_hint.setText(f'已选择 {count} 项' if count else '选择条目后可重命名、移动或添加标签。')
+        self.buttons[3].setEnabled(count == 1)
+        self.buttons[4].setEnabled(count > 0)
+        self.buttons[5].setEnabled(any(entry is not None for _, entry in selected))
+
+    def context_menu(self, point):
+        item = self.tree.itemAt(point)
+        if item is None: return
+        if not item.isSelected():
+            self.tree.clearSelection()
+            item.setSelected(True)
+        menu = QMenu(self)
+        for button in self.buttons[3:]:
+            action = menu.addAction(button.text())
+            action.setEnabled(button.isEnabled())
+            action.triggered.connect(button.click)
+        menu.exec(self.tree.viewport().mapToGlobal(point))
 
     def add_row(self, path, tags, entry):
         item = QTreeWidgetItem([path.name, str(path), tags])
@@ -277,13 +312,17 @@ class FileManagerDialog(QDialog):
     def filter(self, text):
         for i in range(self.tree.topLevelItemCount()):
             item = self.tree.topLevelItem(i)
-            item.setHidden(text.casefold() not in (item.text(0)+' '+item.text(1)).casefold())
+            hidden = text.casefold() not in (item.text(0)+' '+item.text(1)).casefold()
+            if hidden: item.setSelected(False)
+            item.setHidden(hidden)
 
     def selected(self):
         return [item.data(0, Qt.ItemDataRole.UserRole) for item in self.tree.selectedItems()]
 
     def destination(self):
-        paths = [self.root] + [c.path for c in self.categories if c.path != self.root and c.path.is_dir()]
+        paths = [self.root] + [c.path for c in self.categories
+                               if c.path != self.root and c.path.is_dir()
+                               and c.path.resolve().is_relative_to(self.root.resolve())]
         labels = ['工作区根目录'] + [str(p.relative_to(self.root)) for p in paths[1:]]
         label, ok = QInputDialog.getItem(self, '选择分类', '目标位置', labels, 0, False)
         return paths[labels.index(label)] if ok else None
@@ -355,6 +394,7 @@ class FileManagerDialog(QDialog):
         if error:
             self.hint.setText('导入未完成，可调整后重试。')
             for button in self.buttons: button.setEnabled(True)
+            self.update_selection()
             QMessageBox.warning(self, '导入未完成', error)
         else:
             if skipped:
@@ -376,3 +416,52 @@ class FileManagerDialog(QDialog):
         if self.worker is None:
             self.import_items([url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()])
             event.acceptProposedAction()
+
+
+class UnifiedFileManager(QDialog):
+    """One entry point for workspace organization and file browsing."""
+    def __init__(self, root, categories, entries, db, settings, parent=None, entry=None):
+        super().__init__(parent)
+        from types import SimpleNamespace
+        self.db = db
+        self.setWindowTitle('文件管理')
+        self.resize(1000, 700)
+        layout = QVBoxLayout(self)
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs)
+        self.organizer = FileManagerDialog(root, categories, entries, db, self)
+        target = entry or SimpleNamespace(name=Path(root).name, path=Path(root), is_dir=True)
+        self.browser = ToolFilesDialog(target, settings, self, db=db)
+        for widget in (self.organizer, self.browser):
+            widget.setWindowFlags(Qt.WindowType.Widget)
+        self.tabs.addTab(self.browser, '浏览文件')
+        self.tabs.addTab(self.organizer, '整理工作区')
+        self.tabs.setCurrentWidget(self.browser if entry else self.organizer)
+        self.organizer.accepted.connect(self.accept)
+        self.tabs.currentChanged.connect(self._sync_tabs)
+
+    def _sync_tabs(self, index):
+        if self.tabs.widget(index) is not self.organizer or not self.browser.changed:
+            return
+        # Browser edits can invalidate the organizer's original paths. Reload on
+        # close instead of offering stale paths for a destructive operation.
+        self.organizer.setEnabled(False)
+        self.organizer.hint.setText('文件已更改，请关闭并重新打开文件管理，继续整理。')
+
+    @property
+    def changed(self):
+        return self.organizer.changed or self.browser.changed
+
+    def import_items(self, paths):
+        self.tabs.setCurrentWidget(self.organizer)
+        self.organizer.import_items(paths)
+
+    def reject(self):
+        if self.organizer.worker is None:
+            super().reject()
+
+    def closeEvent(self, event):
+        if self.organizer.worker is not None:
+            event.ignore()
+        else:
+            super().closeEvent(event)

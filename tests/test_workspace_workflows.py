@@ -201,6 +201,22 @@ class WorkflowUi(unittest.TestCase):
             self.assertIn('截断', dialog.preview.toPlainText())
             dialog.close()
 
+    def test_unified_browser_rename_preserves_metadata(self):
+        from config.db import DB
+        from ui.widgets.file_manager import UnifiedFileManager
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); source = root / 'old.txt'; source.write_text('test')
+            db = DB(root / 'data' / 'test.db'); db.set_tags(source, ['保留'])
+            dialog = UnifiedFileManager(root, [], [], db, Settings(root / 'settings.yaml'))
+            with patch.object(dialog.browser, 'selected', return_value=source), \
+                    patch('ui.widgets.file_manager.QInputDialog.getText', return_value=('new.txt', True)):
+                dialog.browser.rename_file()
+            self.assertEqual(db.all_meta()[str(root / 'new.txt')]['tags'], ['保留'])
+            dialog.tabs.setCurrentWidget(dialog.browser)
+            dialog.tabs.setCurrentWidget(dialog.organizer)
+            self.assertFalse(dialog.organizer.isEnabled())
+            dialog.close(); db.close()
+
     def test_side_panel_tabs_preserve_unsaved_note(self):
         from PySide6.QtGui import QIcon
         from ui.widgets.detail import DetailPanel
