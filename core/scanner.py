@@ -13,6 +13,14 @@ SKIP_FILE_NAMES = {'00.txt', 'note.md', 'note.txt', 'readme.md', 'readme.txt',
     'changelog.md', 'desktop.ini', 'thumbs.db', '.ds_store'}
 TOOL_SUFFIXES = {'.exe','.bat','.cmd','.lnk','.ps1','.py','.jar','.js','.mjs','.cjs'}
 PROJECT_MARKERS = {'pyproject.toml','package.json','cargo.toml','go.mod','requirements.txt','.git'}
+# Support folders inside one application are not separate tools.
+SUPPORT_DIR_NAMES = {'bin','build','dist','doc','docs','example','examples','include',
+                     'lib','libs','out','resource','resources','runtime','src',
+                     'target','test','tests','jre','jdk','scripts','script','tools',
+                     'tool','plugins','plugin','conf','config','data','assets',
+                     'static','public','migrations','api','routes','models','views',
+                     'controllers','services','utils','common','core','internal',
+                     'pkg','cmd'}
 DEFAULT_SCAN_DEPTH = 2
 MAX_SCAN_DEPTH = 16
 
@@ -37,6 +45,28 @@ def _children(path):
 def _is_tool(path, children):
     return (any(p.is_file() and (p.suffix.lower() in TOOL_SUFFIXES or p.name.lower() in PROJECT_MARKERS)
                 for p in children) or (path / '.git').exists())
+
+
+def _is_collection(children):
+    """A mixed folder of loose entries and independent sub-tools.
+
+    `OSINT/` with a few jars and several tool folders belongs to this shape and
+    should stay navigable. A project (`src/`, `tests/`) or an application
+    distribution (many plugin jars plus `lib/`) must remain one tool.
+    """
+    if any(p.name.lower() in PROJECT_MARKERS for p in children):
+        return False
+    launch_files = [p for p in children if p.is_file()
+                    and (p.suffix.lower() in TOOL_SUFFIXES
+                         or p.name.lower() in PROJECT_MARKERS)]
+    folders = [p for p in children if p.is_dir()
+               and p.name.lower() not in SUPPORT_DIR_NAMES]
+    # Cheap rejects before listing child folders.
+    if len(folders) < 2 or len(folders) < len(launch_files):
+        return False
+    subtools = [p for p in folders if _is_tool(p, _children(p))]
+    # Keep distributions like Burp (dozens of jars, two support folders) intact.
+    return len(subtools) >= 2 and len(subtools) >= len(launch_files)
 
 
 def _entry_type(path, is_dir, children=None):
@@ -78,7 +108,9 @@ def scan(root: Path, max_depth=DEFAULT_SCAN_DEPTH) -> list[Category]:
                 except OSError: continue
                 children = _children(child)
                 nested = any(p.is_dir() or p.name.lower() not in SKIP_FILE_NAMES for p in children)
-                if depth+1 < max_depth and nested and not _is_tool(child, children):
+                is_tool = _is_tool(child, children)
+                if depth+1 < max_depth and nested and (
+                        not is_tool or _is_collection(children)):
                     visit(child, key, depth+1)
                 else:
                     add_entry(category, child, children)
@@ -101,7 +133,7 @@ def scan(root: Path, max_depth=DEFAULT_SCAN_DEPTH) -> list[Category]:
                 visited.add(resolved)
             except OSError: continue
             children = _children(directory)
-            if _is_tool(directory, children):
+            if _is_tool(directory, children) and not _is_collection(children):
                 if root_category is None:
                     root_category = Category('__root__', strip_prefix(root.name), root)
                     categories.insert(0, root_category)

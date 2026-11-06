@@ -60,6 +60,38 @@ class NestedFolderTests(unittest.TestCase):
         self.assertTrue(bar._category_rows['A-tools/Recon'][0].isHidden())
         bar.close();bar.deleteLater();app.processEvents()
 
+    def test_mixed_collection_expands_its_subtools(self):
+        self.file('A-tools/OSINT/FlashSearch.jar')
+        self.file('A-tools/OSINT/iconhash.exe')
+        self.file('A-tools/OSINT/SubOne/main.py')
+        self.file('A-tools/OSINT/SubTwo/tool.exe')
+        self.file('A-tools/OSINT/SubThree/run.bat')
+        categories = scan(self.root, max_depth=4)
+        mapping = {c.cat_id: c for c in categories}
+        self.assertIn('A-tools/OSINT', mapping)
+        entries = {e.name for e in mapping['A-tools/OSINT'].entries}
+        self.assertEqual(entries, {'FlashSearch.jar', 'iconhash.exe',
+                                   'SubOne', 'SubTwo', 'SubThree'})
+        self.assertNotIn(self.root / 'A-tools/OSINT',
+                         {e.path for c in categories for e in c.entries})
+
+    def test_source_folders_do_not_turn_a_project_into_a_collection(self):
+        self.file('app/main.py')
+        self.file('app/src/module.py')
+        self.file('app/tests/test_main.py')
+        self.file('app/docs/guide.md')
+        entries = [e for c in scan(self.root, max_depth=4) for e in c.entries]
+        self.assertEqual([e.path for e in entries], [self.root / 'app'])
+        self.assertEqual(entries[0].entry_type, 'tool')
+
+    def test_application_distribution_stays_one_tool(self):
+        for index in range(12):
+            self.file(f'Burp/plugin-{index}.jar')
+        self.file('Burp/jython/jython.jar')
+        self.file('Burp/map_man/tool.jar')
+        entries = [e for c in scan(self.root, max_depth=4) for e in c.entries]
+        self.assertEqual([e.path for e in entries], [self.root / 'Burp'])
+
     def test_default_two_levels_and_custom_limit(self):
         self.file('Group/Level2/Level3/Level4/demo/main.py')
         limited=scan(self.root)
