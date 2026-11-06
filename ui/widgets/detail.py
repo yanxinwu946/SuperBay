@@ -26,8 +26,9 @@ from PySide6.QtWidgets import (
 from ui.widgets.modern_combo import ModernComboBox as QComboBox
 
 
-from core import notes
+from core import entry_kind, notes
 from core.models import DEFAULT_SHELL, Entry
+from ui.widgets.kind_badge import KindBadge
 
 
 class CommandDialog(QDialog):
@@ -335,8 +336,21 @@ class DetailPanel(QFrame):
         self._path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         text.addWidget(self._name)
         text.addWidget(self._path)
+        self._kinds_row = QHBoxLayout()
+        self._kinds_row.setContentsMargins(0, 3, 0, 0)
+        self._kinds_row.setSpacing(4)
+        text.addLayout(self._kinds_row)
         hero.addLayout(text, 1)
         lay.addLayout(hero)
+
+    def _set_kinds(self, entry: Entry) -> None:
+        while self._kinds_row.count():
+            item = self._kinds_row.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for kind in entry_kind.kinds_of(entry):
+            self._kinds_row.addWidget(KindBadge(kind))
+        self._kinds_row.addStretch(1)
 
     def _build_tag_row(self, lay: QVBoxLayout) -> None:
         row = QHBoxLayout()
@@ -552,9 +566,13 @@ class DetailPanel(QFrame):
             self._icon.setPixmap(icon.pixmap(52, 52))
         self._name.setText(entry.name)
         self._name.setToolTip(entry.name)
-        self._path.setText("工具目录" if entry.is_dir else "文件条目")
+        if entry.group:
+            self._path.setText("分类文件夹" + (f" · {entry.group_count} 个条目" if entry.group_count else ""))
+        else:
+            self._path.setText("工具目录" if entry.is_dir else "文件条目")
         self._full_path.setText(str(entry.path))
         self._path.setToolTip(str(entry.path))
+        self._set_kinds(entry)
         self._tags.setText("  ".join(f"#{t}" for t in entry.tags) or "未设置标签")
         self._pin_btn.setText("取消固定" if entry.pinned else "固定")
         self._aliases.setText("搜索别名：" + ("、".join(entry.aliases) or "未设置"))

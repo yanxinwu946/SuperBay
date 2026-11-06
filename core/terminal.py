@@ -6,6 +6,7 @@ import struct
 import subprocess
 import re
 import shutil
+import zipfile
 from pathlib import Path
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -59,6 +60,71 @@ def is_gui_exe(path: Path) -> bool:
     return pe_subsystem(path) == 2
 
 
+# Main-class constants are enough to tell a desktop Java app from a CLI jar.
+_JAR_GUI_MARKERS = (b'javafx/', b'javax/swing', b'java/awt/Frame', b'java/awt/Window',
+                    b'java/awt/Canvas', b'org/eclipse/swt', b'JFrame', b'JDialog', b'JOptionPane')
+_JAR_ARG = re.compile(r'(?:^|\s)-jar\s+(?:"([^"]+)"|(\S+))(?:\s+(.*))?$',
+                      re.IGNORECASE | re.DOTALL)
+
+
+def _manifest_main_class(manifest: bytes) -> str | None:
+    lines = manifest.decode('utf-8', 'replace').replace('\r\n', '\n').split('\n')
+    joined: list[str] = []
+    for line in lines:
+        if line.startswith(' ') and joined:
+            joined[-1] += line[1:]
+        else:
+            joined.append(line)
+    for line in joined:
+        key, _, value = line.partition(':')
+        if key.strip().lower() == 'main-class':
+            return value.strip()
+    return None
+
+
+def jar_is_gui(path: Path) -> bool:
+    """Best effort: inspect the manifest's main class for desktop UI packages."""
+    try:
+        with zipfile.ZipFile(path) as archive:
+            main = _manifest_main_class(archive.read('META-INF/MANIFEST.MF'))
+            if not main:
+                return False
+            data = archive.read(main.replace('.', '/') + '.class')
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return False
+    return any(marker in data for marker in _JAR_GUI_MARKERS)
+
+
+def _javaw_for(java: Path, environment) -> Path | None:
+    candidate = java.with_name('javaw.exe')
+    if candidate.is_file():
+        return candidate
+    path = (environment if environment is not None else os.environ).get('PATH', '')
+    found = shutil.which('javaw', path=path)
+    return Path(found) if found else None
+
+
+def _java_gui_spec(java: Path, parameters: str, cwd: Path, environment):
+    """`java -jar` pointing at a desktop JAR becomes a windowless javaw launch."""
+    match = _JAR_ARG.search(parameters)
+    if not match:
+        return None
+    jar = Path(match[1] or match[2])
+    if not jar.is_absolute():
+        jar = cwd / jar
+    if not jar.is_file() or jar.suffix.lower() != '.jar' or not jar_is_gui(jar):
+        return None
+    javaw = _javaw_for(java, environment)
+    if javaw is None:
+        return None
+    prefix = parameters[:match.start()].strip()
+    suffix = (match[3] or '').strip()
+    command = (f'{prefix} ' if prefix else '') + '-jar ' + subprocess.list2cmdline([str(jar)])
+    if suffix:
+        command += ' ' + suffix
+    return javaw, command
+
+
 def gui_command(command: str, cwd: Path, environment=None, shell='cmd'):
     """Recognize a direct GUI executable invocation, never a shell expression."""
     text = command.strip()
@@ -82,8 +148,11 @@ def gui_command(command: str, cwd: Path, environment=None, shell='cmd'):
         found = shutil.which(name, path=(environment if environment is not None else os.environ).get('PATH', ''))
         if not found: return None
         path = Path(found)
-    if path.suffix.lower() != '.exe' or not is_gui_exe(path): return None
-    return path, match[4] or ''
+    if path.suffix.lower() == '.exe' and is_gui_exe(path):
+        return path, match[4] or ''
+    if path.stem.lower() == 'java':
+        return _java_gui_spec(path, match[4] or '', cwd, environment)
+    return None
 
 
 def terminal_argv(terminal: str, template: str, cwd: Path, command: list[str]) -> tuple[str, str]:

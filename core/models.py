@@ -33,6 +33,9 @@ class Entry:
     entry_type: str = TYPE_TOOL
     desc: str = ""          # 摘要（笔记首行 或 相对路径）
     note_path: Path | None = None   # 实际使用的笔记文件路径
+    kinds: tuple[str, ...] = ()     # 语言/形态标签，扫描时识别（见 core.entry_kind）
+    group: bool = False             # 虚拟分类文件夹（用于「全部」按文件夹浏览）
+    group_count: int = 0            # 该文件夹包含的条目数，文件夹卡片上显示
 
     # 运行时附加数据（来自 db，不进扫描逻辑）
     pinned: bool = False

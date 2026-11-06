@@ -39,6 +39,12 @@ QToolTip { background: #3a3f47; color: #fff; border: none; padding: 5px 9px; bor
 }
 #TagBtn:hover { background: rgba(60, 181, 111, 0.16); color: #5fd08e; }
 #TagBtn:checked { background: rgba(60, 181, 111, 0.16); color: #5fd08e; border-color: #3cb56f; font-weight: 600; }
+#KindBtn {
+    background: #1e2126; border: 1px solid transparent; border-radius: 11px;
+    padding: 3px 10px; font-size: 11px; color: #9aa3af;
+}
+#KindBtn:hover { background: rgba(84, 140, 214, 0.18); color: #8fc2ff; }
+#KindBtn:checked { background: rgba(84, 140, 214, 0.22); color: #9fcbff; border-color: #4f8cd6; font-weight: 600; }
 #SideScroll { background: #26292f; border: none; }
 #SideScroll > QWidget { background: transparent; }
 #SideContent { background: transparent; }

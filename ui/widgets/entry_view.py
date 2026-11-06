@@ -11,9 +11,20 @@ from PySide6.QtCore import QPointF
 import re
 from PySide6.QtWidgets import QApplication, QListView, QStyle, QStyledItemDelegate, QAbstractItemView, QWidget
 
+from core import entry_kind
 from core.models import Entry
 from ui.misc import WRAP_FLAGS as WRAP
 from ui.misc import wrapped_text_height
+from ui.widgets.kind_badge import draw_badges, draw_count_badge
+
+def paint_badges(painter, entry, right, center_y, dark, max_width):
+    painter.save()
+    if entry.group:
+        if entry.group_count:
+            draw_count_badge(painter, right, center_y, entry.group_count, dark)
+    else:
+        draw_badges(painter, entry_kind.kinds_of(entry), right, center_y, dark, max_width)
+    painter.restore()
 
 def draw_name(painter, rect, text, query, dark, center=False):
     layout = QTextLayout(text, painter.font())
@@ -48,10 +59,17 @@ GRID_SIZE = QSize(168, 104)
 LIST_SIZE = QSize(200, 48)
 GRID_ICON_AREA = 50  # 图标区高度；名称从这里开始
 GRID_BOTTOM_PAD = 10
+BADGE_COLUMN_WIDTH = 92  # 列表视图右侧语言标签列宽（不含启动箭头）
 
 
 def list_columns(rect):
-    return (QRect(rect.x()+48, rect.y(), max(1, rect.width()-88), rect.height()),)
+    return (QRect(rect.x()+48, rect.y(),
+                  max(1, rect.width()-88-BADGE_COLUMN_WIDTH), rect.height()),)
+
+
+def badge_column(rect):
+    return QRect(rect.right()-40-BADGE_COLUMN_WIDTH, rect.y(),
+                 BADGE_COLUMN_WIDTH, rect.height())
 
 
 class EntryHeader(QWidget):
@@ -65,6 +83,8 @@ class EntryHeader(QWidget):
         painter.setPen(QColor("#9aa3af" if dark else "#6b7380"))
         for rect, title in zip(list_columns(self.rect()), ("名称",)):
             painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter, title)
+        painter.drawText(badge_column(self.rect()).adjusted(6, 0, 0, 0),
+                         Qt.AlignmentFlag.AlignVCenter, "语言")
         painter.setPen(QColor("#343941" if dark else "#e8ebee"))
         painter.drawLine(0, self.height()-1, self.width(), self.height()-1)
 
@@ -100,7 +120,9 @@ class EntryModel(QAbstractListModel):
         if role == Qt.ItemDataRole.ToolTipRole:
             versions = entry.runtime_profile.get("versions", {})
             runtime = " · ".join(f"{family} {ref.get('version', '')}" for family, ref in versions.items())
-            return entry.name + (f"\n固定环境：{runtime}" if runtime else "")
+            kinds = " · ".join(entry_kind.label(kind) for kind in entry_kind.kinds_of(entry))
+            return (entry.name + (f"\n语言 / 形态：{kinds}" if kinds else "")
+                    + (f"\n固定环境：{runtime}" if runtime else ""))
 
 
 class EntryDelegate(QStyledItemDelegate):
@@ -115,7 +137,7 @@ class EntryDelegate(QStyledItemDelegate):
         font = QFont(option.font)
         font.setWeight(QFont.Weight.Medium)
         text = (("★ " if entry.pinned else "") + entry.name) if entry else ""
-        height = wrapped_text_height(text, self.view.viewport().width() - 88, font)
+        height = wrapped_text_height(text, self.view.viewport().width() - 88 - BADGE_COLUMN_WIDTH, font)
         return QSize(max(LIST_SIZE.width(), self.view.viewport().width()),
                      max(LIST_SIZE.height(), height + 16))
 
@@ -141,6 +163,9 @@ class EntryDelegate(QStyledItemDelegate):
         painter.setBrush(QColor("#2f5d43" if dark else "#e9f7ef") if selected else bg)
         painter.drawRoundedRect(rect, 8, 8)
         self.icon_for(entry).paint(painter, QRect(rect.x()+14, rect.y()+12, 28, 28))
+        right = rect.right()-35  # keep the launch arrow area clear
+        paint_badges(painter, entry, right, rect.y()+26, dark,
+                     max(30, right-(rect.x()+50)))
         left, top = rect.x()+14, rect.y()+GRID_ICON_AREA
         width = rect.width()-28
         font = QFont("Microsoft YaHei UI")
@@ -187,6 +212,8 @@ class EntryDelegate(QStyledItemDelegate):
             painter.setPen(QColor("#e6e9ee" if dark else "#2b323d") if column == columns[0]
                            else QColor("#9aa3af" if dark else "#6b7380"))
             draw_name(painter, column, text, self.view.property("searchQuery") or "", dark, center=True)
+        paint_badges(painter, entry, rect.right()-36,
+                     rect.center().y(), dark, BADGE_COLUMN_WIDTH)
         painter.setPen(QColor(154, 163, 175, 24))
         painter.drawLine(columns[0].left(), rect.bottom()+1, rect.right(), rect.bottom()+1)
         if hovered or selected:

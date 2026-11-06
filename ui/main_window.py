@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 from ui.widgets.modern_combo import ModernComboBox as QComboBox
 
 
-from core import launcher, notes, scanner
+from core import entry_kind, launcher, notes, scanner
 from core.runtime_profile import profile_environment
 from core.search import SearchIndex
 from ui.widgets.entry_view import EntryView, EntryHeader, ENTRY_ROLE
@@ -149,11 +149,13 @@ class MainWindow(QMainWindow):
         self.tag: str | None = None
         self.query = ""
         self.kind = "all"
+        self.lang = "all"  # 语言/形态筛选，与导航、标签可叠加
         self.sort_order = "smart"
         self.view = self.settings.get("view", "grid")
         self.selected: Entry | None = None
         self._icons: dict[str, QIcon] = {}       # path → 系统图标，reload 时统一取
         self._note_cache: dict[str, str] = {}    # path → 笔记小写缓存，搜索用
+        self._overview_entry_cache: dict = {}    # 「全部」按文件夹浏览时的虚拟文件夹
         self._tray_quit = False                  # 托盘点了「退出」才置位，closeEvent 靠它放行
         self._reloading = False                  # reload 重入守卫，扫描中再按 F5 先记为 pending
         self._scans: list[tuple[QThread, _ScanWorker]] = []  # 持引用到线程结束，防 GC
@@ -313,7 +315,7 @@ class MainWindow(QMainWindow):
         self._search = QLineEdit()
         self._search.setObjectName("SearchBar")
         self._search.setPlaceholderText("搜索   Ctrl+K")
-        self._search.setToolTip("支持拼音、别名、标签:扫描、类型:文件；Enter 启动，↓ 选择。")
+        self._search.setToolTip("支持拼音、别名、标签:扫描、语言:python、类型:文件；Enter 启动，↓ 选择。")
         self._search.setClearButtonEnabled(True)
         self._search.installEventFilter(self)
         self._search.addAction(svg_icon(SVG_SEARCH, ICON_COLOR),
@@ -349,6 +351,7 @@ class MainWindow(QMainWindow):
         self._sidebar = SideBar()
         self._sidebar.navChanged.connect(self._on_nav)
         self._sidebar.tagChanged.connect(self._on_tag)
+        self._sidebar.kindChanged.connect(self._on_kind)
         body.addWidget(self._sidebar)
 
         self._content_panel = self._make_content()
@@ -470,13 +473,25 @@ class MainWindow(QMainWindow):
         header.addStretch(1)
         # §2.1/§3.6: one compact toolbar reserves space for results.
         filters = header
+        filters.setSpacing(8)
+        self._lang_filter = QComboBox()
+        self._lang_filter.setObjectName("LangFilter")
+        self._lang_filter.setMinimumWidth(104)
+        self._lang_filter.setToolTip("按语言或打包形态筛选，可与目录、标签叠加")
+        self._lang_filter.addItem("全部语言", "all")
+        for value in entry_kind.FILTER_ORDER:
+            self._lang_filter.addItem(entry_kind.label(value), value)
+        self._lang_filter.currentIndexChanged.connect(self._filter_changed)
+        filters.addWidget(self._lang_filter)
         self._kind_filter = QComboBox()
+        self._kind_filter.setMinimumWidth(104)
         for label, value in (("全部类型", "all"), ("工具", "tool"), ("资料目录", "dir"), ("文件", "file")):
             self._kind_filter.addItem(label, value)
         self._kind_filter.currentIndexChanged.connect(self._filter_changed)
         filters.addWidget(self._kind_filter)
         self._sort_filter = QComboBox()
-        for label, value in (("智能排序", "smart"), ("名称 A → Z", "name"), ("最常使用", "runs"), ("最近启动", "recent"), ("名称 Z → A", "name_desc"), ("使用次数最少", "runs_asc"), ("类型", "type"), ("最近修改", "modified"), ("最早修改", "modified_asc"), ("文件最大", "size"), ("文件最小", "size_asc")):
+        self._sort_filter.setMinimumWidth(104)
+        for label, value in (("智能排序", "smart"), ("名称 A → Z", "name"), ("最常使用", "runs"), ("最近启动", "recent"), ("名称 Z → A", "name_desc"), ("使用次数最少", "runs_asc"), ("类型", "type"), ("按语言", "lang"), ("最近修改", "modified"), ("最早修改", "modified_asc"), ("文件最大", "size"), ("文件最小", "size_asc")):
             self._sort_filter.addItem(label, value)
         self._sort_filter.setCurrentIndex(max(0, self._sort_filter.findData(self.settings.get("sort_order", "smart"))))
         self.sort_order = self._sort_filter.currentData()
@@ -724,6 +739,7 @@ class MainWindow(QMainWindow):
     def _merge_db_meta(self) -> None:
         """把 db 里的元数据（固定/标签/自定义命令/参数记忆/统计）按路径合进扫描结果。"""
         self._directory_entry_cache = {}
+        self._overview_entry_cache = {}
         metas = self.db.all_meta()
         stats = self.db.all_stats()
         for e in self.entries:
@@ -763,15 +779,33 @@ class MainWindow(QMainWindow):
                                self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
         return self._icons[key]
 
+    def _kind_counts(self, entries: list[Entry]) -> list[tuple[str, int]]:
+        counts: dict[str, int] = {}
+        for entry in entries:
+            for kind in entry_kind.kinds_of(entry):
+                counts[kind] = counts.get(kind, 0) + 1
+        file_exe = sum(1 for entry in entries
+                       if not entry.is_dir and "exe" in entry_kind.kinds_of(entry))
+        if file_exe:
+            counts["exe_file"] = file_exe
+        return [(value, counts[value]) for value in entry_kind.FILTER_ORDER if counts.get(value)]
+
     def _rebuild_sidebar(self) -> None:
         entries = self.entries
         cats = [c for c in self.categories if c.entries or any(e.cat_id.startswith(c.cat_id + "/") for e in entries)]
+        kinds = self._kind_counts(entries)
+        if self.lang != "all" and self.lang not in {value for value, _ in kinds}:
+            self.lang = "all"
+            with QSignalBlocker(self._lang_filter):
+                self._lang_filter.setCurrentIndex(0)
         self._sidebar.rebuild(
             cats, len(entries),
             star_count=sum(1 for e in entries if e.pinned),
             recent_count=sum(1 for e in entries if e.runs > 0 and not e.recent_hidden),
             tags=sorted({t for e in entries for t in e.tags})
-                 if self.settings.get("show_tags", False) else [])
+                 if self.settings.get("show_tags", False) else [],
+            kinds=kinds)
+        self._sidebar.set_kind(None if self.lang == "all" else self.lang)
         # A long title must wrap inside the sidebar, including scrollbar space.
         available = self._sidebar.width() - 20 - self._sidebar._cat_scroll.verticalScrollBar().sizeHint().width()
         for key, button in self._sidebar._nav_buttons.items():
@@ -781,14 +815,46 @@ class MainWindow(QMainWindow):
                 button.setMaximumWidth(max(96, available-18-indent))
 
 
+    def _is_folder_overview(self) -> bool:
+        """「全部」且没有任何筛选时，先按文件夹分组，而不是把所有工具铺平。"""
+        return (self.nav == "all" and not self.query and self.tag is None
+                and self.kind == "all" and self.lang == "all")
+
+    def _root_overview(self) -> list[Entry]:
+        """工作区顶层：根目录条目 + 每个一级分类一个文件夹入口。"""
+        items = [e for e in self.entries if e.cat_id == "__root__"]
+        counts: dict[str, int] = {}
+        for entry in self.entries:
+            if entry.cat_id != "__root__":
+                top = entry.cat_id.split("/")[0]
+                counts[top] = counts.get(top, 0) + 1
+        cache = self._overview_entry_cache
+        for category in self.categories:
+            if category.parent_id is not None or category.cat_id == "__root__":
+                continue
+            count = counts.get(category.cat_id, 0)
+            if not count:
+                continue
+            folder = cache.get(category.path)
+            if folder is None:
+                folder = Entry(category.name, category.path, category.cat_id,
+                               category.name, True, entry_type="dir", group=True)
+                cache[category.path] = folder
+            folder.desc = f"{count} 个条目 · 打开查看此目录内容"
+            folder.group_count = count
+            items.append(folder)
+        return items
+
     def _filtered(self) -> list[Entry]:
         """当前视图状态（nav/tag/query）下的条目列表。
 
-        常规视图已固定优先、按名称排序；「最近使用」按时间倒序
+        「全部」无筛选时按文件夹浏览；一旦搜索或筛选，就回到跨目录的平铺结果。
+        常规视图固定优先、按名称排序；「最近使用」按时间倒序
         （固定项不特别置顶，否则就失去「最近」语义）。
         """
-        items = self.entries
-        if self.nav == "star":
+        overview = self._is_folder_overview()
+        items = self._root_overview() if overview else self.entries
+        if not overview and self.nav == "star":
             items = [e for e in items if e.pinned]
         elif self.nav == "recent":
             items = [e for e in items if e.runs > 0 and not e.recent_hidden]
@@ -802,14 +868,21 @@ class MainWindow(QMainWindow):
                         if cache is None: self._directory_entry_cache = cache = {}
                         folder = cache.get(category.path)
                         if folder is None:
-                            folder = Entry(category.path.name, category.path, self.nav, category.name, True, entry_type="dir")
+                            folder = Entry(category.path.name, category.path, self.nav,
+                                           category.name, True, entry_type="dir", group=True)
                             folder.desc = "子目录 · 打开查看此目录内容"
                             cache[category.path] = folder
+                        folder.group_count = sum(
+                            1 for e in self.entries
+                            if e.cat_id == category.cat_id
+                            or e.cat_id.startswith(category.cat_id + "/"))
                         items.append(folder)
         if self.tag:
             items = [e for e in items if self.tag in e.tags]
         if self.kind != "all":
             items = [e for e in items if e.entry_type == self.kind]
+        if self.lang != "all":
+            items = [e for e in items if entry_kind.matches(e, self.lang)]
         self._search_index.ensure(self.entries, self._note_cache)
         for entry in items:
             if id(entry) not in self._search_index.records: self._search_index.update(entry)
@@ -819,6 +892,12 @@ class MainWindow(QMainWindow):
             ranked = self._search_index.ranked(self.query, items)
             ranks = {id(entry): rank for entry, rank in ranked}
             items = [entry for entry, _ in ranked]
+        result = self._apply_sort(items, ranks)
+        if overview:
+            result.sort(key=lambda entry: not entry.group)  # 稳定排序：文件夹在前
+        return result
+
+    def _apply_sort(self, items: list[Entry], ranks: dict) -> list[Entry]:
         if self.sort_order == "recent" or (self.sort_order == "smart" and self.nav == "recent" and not self.query):
             return sorted(items, key=lambda e: (e.last_run, e.name.casefold()), reverse=True)
         if self.sort_order == "runs":
@@ -829,6 +908,8 @@ class MainWindow(QMainWindow):
             return sorted(items, key=lambda e: (e.runs, e.name.casefold()))
         if self.sort_order == "type":
             return sorted(items, key=lambda e: (not e.is_dir, e.path.suffix.casefold(), e.name.casefold()))
+        if self.sort_order == "lang":
+            return sorted(items, key=lambda e: (entry_kind.sort_key(e), e.name.casefold()))
         if self.sort_order in {"modified", "modified_asc", "size", "size_asc"}:
             def file_value(entry):
                 try:
@@ -845,17 +926,22 @@ class MainWindow(QMainWindow):
 
     def _filter_changed(self) -> None:
         self.kind = self._kind_filter.currentData()
+        self.lang = self._lang_filter.currentData() or "all"
         self.sort_order = self._sort_filter.currentData()
         self.settings.set("sort_order", self.sort_order)
+        self._sidebar.set_kind(None if self.lang == "all" else self.lang)
         self._rebuild_grid()
 
     def _reset_filters(self) -> None:
         self._search_timer.stop()
-        self.nav, self.tag, self.query, self.kind = "all", None, "", "all"
-        with QSignalBlocker(self._search), QSignalBlocker(self._kind_filter):
+        self.nav, self.tag, self.query, self.kind, self.lang = "all", None, "", "all", "all"
+        with QSignalBlocker(self._search), QSignalBlocker(self._kind_filter), \
+                QSignalBlocker(self._lang_filter):
             self._search.clear()
             self._kind_filter.setCurrentIndex(0)
+            self._lang_filter.setCurrentIndex(0)
         self._sidebar.set_current("all")
+        self._sidebar.set_kind(None)
         self._rebuild_grid()
         self._focus_search()
 
@@ -893,6 +979,7 @@ class MainWindow(QMainWindow):
         return cat.name if cat else NAV_TITLES.get(self.nav, "全部")
 
     def _rebuild_grid(self) -> None:
+        overview = self._is_folder_overview()
         items = self._filtered()
         category = next((c for c in self.categories if c.cat_id == self.nav), None)
         self._update_navigation()
@@ -900,17 +987,25 @@ class MainWindow(QMainWindow):
         if category:
             scope = "当前目录及子目录" if self._recursive_scope.isChecked() else "仅当前目录"
             self._scope_hint.setText(f"{scope} · {category.path}")
+        elif overview:
+            self._scope_hint.setText("按文件夹浏览 · 点击文件夹进入分类")
         else:
             self._scope_hint.setText("跨目录汇总 · 当前工作区的全部条目" if self.nav == "all" else "当前工作区 · " + self._current_title())
         self._clear_recent_btn.setVisible(self.nav == "recent")
+        folders = sum(1 for entry in items if entry.group)
         self._overview.set_entries(items)
-        self._overview.setVisible(self.view == "grid" and bool(items))
-        self._filter_reset.setVisible(bool(self.query or self.tag or self.nav != "all" or self.kind != "all"))
+        self._overview.setVisible(self.view == "grid" and bool(items)
+                                  and not (overview and folders))
+        self._filter_reset.setVisible(bool(self.query or self.tag or self.nav != "all"
+                                           or self.kind != "all" or self.lang != "all"))
         title = self._current_title()
         self._title.setText(title)
         self._title.setToolTip(title)
-        self._count_lbl.setText(f"{len(items)} 项" if len(items) == len(self.entries)
-                                else f"{len(items)} / {len(self.entries)}")
+        if overview and folders:
+            self._count_lbl.setText(f"{folders} 个文件夹 · {len(self.entries)} 个条目")
+        else:
+            self._count_lbl.setText(f"{len(items)} 项" if len(items) == len(self.entries)
+                                    else f"{len(items)} / {len(self.entries)}")
 
         self._list_header.setVisible(self.view == "list" and bool(items))
         self._browser.set_grid(self.view == "grid")
@@ -1022,6 +1117,13 @@ class MainWindow(QMainWindow):
         self.tag = tag
         if tag:
             self.nav = "all"
+        self._rebuild_grid()
+
+    def _on_kind(self, kind: str | None) -> None:
+        self.lang = kind or "all"
+        with QSignalBlocker(self._lang_filter):
+            index = self._lang_filter.findData(self.lang)
+            self._lang_filter.setCurrentIndex(index if index >= 0 else 0)
         self._rebuild_grid()
 
     def _apply_query(self) -> None:
@@ -1341,11 +1443,13 @@ class MainWindow(QMainWindow):
             return  # 取消切换，别把编辑中的笔记带丢
         self.workspace = root
         self.settings.set("workspace_root", str(root))
-        self.nav, self.tag, self.query = "all", None, ""
+        self.nav, self.tag, self.query, self.lang = "all", None, "", "all"
         self._kind_filter.setCurrentIndex(0)
+        self._lang_filter.setCurrentIndex(0)
         self._sort_filter.setCurrentIndex(0)
         self._search.clear()
         self._sidebar.set_current("all")
+        self._sidebar.set_kind(None)
         self._refresh_workspace_buttons()
         self.reload()
 

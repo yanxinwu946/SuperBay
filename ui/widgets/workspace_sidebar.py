@@ -10,7 +10,7 @@ class WorkspaceSideBar(SideBar):
         self._known_categories = set()
         self._category_scope = None
 
-    def rebuild(self, categories, total, star_count, recent_count, tags):
+    def rebuild(self, categories, total, star_count, recent_count, tags, kinds=None):
         scope = tuple(sorted({str(cat.path if cat.cat_id == "__root__" else cat.path.parent)
                               for cat in categories if not cat.parent_id}))
         if scope != self._category_scope:
@@ -21,7 +21,7 @@ class WorkspaceSideBar(SideBar):
         self._collapsed.intersection_update(keys)
         self._collapsed.update(keys-self._known_categories)
         self._known_categories = keys
-        super().rebuild(categories, total, star_count, recent_count, tags)
+        super().rebuild(categories, total, star_count, recent_count, tags, kinds)
         self._fit_category_widths()
 
     def resizeEvent(self, event):

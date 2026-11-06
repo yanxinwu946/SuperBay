@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.entry_kind import label as kind_label
 from core.models import Category
 from ui.flowlayout import FlowLayout
 from ui.misc import (ICON_COLOR, SVG_CLOCK, SVG_FOLDER, SVG_GRID, SVG_STAR,
@@ -32,6 +33,7 @@ QUICK_NAVS = (
 )
 
 TAG_CLOUD_MAX_H = 120  # 标签云限高，避免挤占分类区
+KIND_CLOUD_MAX_H = 96  # 语言筛选限高，分类区仍占主要空间
 
 
 class _ExpandArrow(QToolButton):
@@ -150,6 +152,7 @@ class _NavigationButton(QPushButton):
 class SideBar(QWidget):
     navChanged = Signal(str)        # "all" | "star" | "recent" | cat_id
     tagChanged = Signal(object)     # str | None
+    kindChanged = Signal(object)    # 语言/形态 key | None
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -163,23 +166,29 @@ class SideBar(QWidget):
         self._group.setExclusive(True)
         self._nav_buttons: dict[str, QPushButton] = {}
         self._tag_buttons: dict[str, QPushButton] = {}
+        self._kind_buttons: dict[str, QPushButton] = {}
         self._collapsed = set()
         self._category_rows = {}
         self._current_nav = "all"
         self._current_tag: str | None = None
+        self._current_kind: str | None = None
 
     # ── 重建 ──
     def rebuild(self, categories: list[Category], total: int,
-                star_count: int, recent_count: int, tags: list[str]) -> None:
-        """全量重建。选中状态存在 _current_nav/_current_tag，重建完 _sync_state 恢复。"""
+                star_count: int, recent_count: int, tags: list[str],
+                kinds: list[tuple[str, int]] | None = None) -> None:
+        """全量重建。选中状态存在 _current_nav/_current_tag/_current_kind，重建完 _sync_state 恢复。"""
         self._clear_layout(self._lay)
         for btn in list(self._group.buttons()):  # 清掉上一轮按钮，复用同一个按钮组避免累积
             self._group.removeButton(btn)
         self._nav_buttons.clear()
         self._tag_buttons.clear()
+        self._kind_buttons.clear()
 
         self._build_quick_nav(total, star_count, recent_count)
         self._build_category_tree(categories)
+        if kinds:
+            self._build_kind_cloud(kinds)
         if tags:
             self._build_tag_cloud(tags)
 
@@ -242,6 +251,24 @@ class SideBar(QWidget):
             row.setVisible(not any(key.startswith(parent + "/") for parent in self._collapsed))
             arrow.setExpandable(expandable)
             arrow.setExpanded(key not in self._collapsed)
+
+    def _build_kind_cloud(self, kinds: list[tuple[str, int]]) -> None:
+        """语言/形态筛选：比顶部下拉更近一步，单击即过滤。"""
+        self._lay.addSpacing(6)
+        self._lay.addWidget(self._section_title("语 言"))
+        scroll, cloud = self._make_scroll(max_height=KIND_CLOUD_MAX_H)
+        flow = FlowLayout(cloud, margin=2, h_spacing=6, v_spacing=6)
+        for key, count in kinds:
+            btn = QPushButton(kind_label(key))
+            btn.setObjectName("KindBtn")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip(f"{kind_label(key)} · {count} 个条目")
+            btn.clicked.connect(lambda _=False, k=key: self._on_kind(k))
+            self._kind_buttons[key] = btn
+            flow.addWidget(btn)
+        scroll.setWidget(cloud)
+        self._lay.addWidget(scroll)
 
     def _build_tag_cloud(self, tags: list[str]) -> None:
         """标签云：流式布局 + 限高滚动。标签和导航互斥，高亮逻辑在 _sync_state。"""
@@ -321,6 +348,12 @@ class SideBar(QWidget):
         self._sync_state()
         self.tagChanged.emit(self._current_tag)
 
+    def _on_kind(self, kind: str) -> None:
+        # 语言是叠加在导航/标签上的细化条件，不与它们互斥
+        self._current_kind = None if self._current_kind == kind else kind
+        self._sync_state()
+        self.kindChanged.emit(self._current_kind)
+
     def _sync_state(self) -> None:
         """把当前选中落到按钮勾选态和图标颜色上。"""
         for key, btn in self._nav_buttons.items():
@@ -330,9 +363,16 @@ class SideBar(QWidget):
             btn.setIcon(svg_icon(btn.property("svg"), color))
         for tag, btn in self._tag_buttons.items():
             btn.setChecked(tag == self._current_tag)
+        for kind, btn in self._kind_buttons.items():
+            btn.setChecked(kind == self._current_kind)
 
     def set_current(self, key: str) -> None:
         """给主窗口强制切导航用，不发信号，调用方自己会重建。"""
         self._current_nav = key
         self._current_tag = None
+        self._sync_state()
+
+    def set_kind(self, kind: str | None) -> None:
+        """顶栏下拉改动时同步侧栏勾选态，不发信号。"""
+        self._current_kind = kind
         self._sync_state()

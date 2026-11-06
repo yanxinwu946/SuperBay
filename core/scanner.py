@@ -2,6 +2,7 @@
 from __future__ import annotations
 import logging
 from pathlib import Path
+from . import entry_kind
 from .models import TYPE_DIR, TYPE_FILE, TYPE_TOOL, Category, Entry, strip_prefix
 from .notes import find_note, note_excerpt
 
@@ -56,8 +57,11 @@ def scan(root: Path, max_depth=DEFAULT_SCAN_DEPTH) -> list[Category]:
     def add_entry(category, path, children=None):
         directory = path.is_dir()
         note = find_note(path) if directory else None
+        entry_type = _entry_type(path, directory, children)
         entry = Entry(path.name, path, category.cat_id, category.name, directory,
-                      entry_type=_entry_type(path, directory, children), note_path=note)
+                      entry_type=entry_type, note_path=note)
+        entry.kinds = entry_kind.detect(path, directory, children,
+                                        is_tool=entry_type == TYPE_TOOL)
         entry.desc = note_excerpt(note) or f'{category.name} / {path.name}'
         category.entries.append(entry)
 

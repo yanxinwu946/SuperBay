@@ -14,6 +14,7 @@ def phonetic(text):
 
 from dataclasses import dataclass
 
+from core import entry_kind
 from core.models import Entry
 
 
@@ -41,15 +42,19 @@ class SearchRecord:
     kind: str
     phonetic_name: str
     actual_tags: str
+    kind_text: str
+    kind_keys: tuple[str, ...]
 
     @classmethod
     def build(cls, entry: Entry, note: str = ""):
         name = normalize(entry.name)
         aliases = " ".join(entry.aliases)
+        kinds = entry_kind.kinds_of(entry)
         return cls(name, normalize(" ".join(entry.tags) + " " + aliases),
                    normalize(f"{entry.cat_name} {entry.path} {entry.desc}"), normalize(note),
                    "".join(word[0] for word in re.findall(r"[a-z0-9]+", name)), entry.entry_type,
-                   normalize(phonetic(entry.name + " " + aliases)), normalize(" ".join(entry.tags)))
+                   normalize(phonetic(entry.name + " " + aliases)), normalize(" ".join(entry.tags)),
+                   normalize(entry_kind.search_text(entry)), kinds)
 
     def score(self, tokens: tuple[str, ...]) -> int | None:
         if not tokens:
@@ -57,6 +62,12 @@ class SearchRecord:
         total = 0
         name, tags, context, note, initials = self.name, self.tags, self.context, self.note, self.initials
         for token in tokens:
+            if token.startswith(('语言:', 'lang:')):
+                value = token.split(':', 1)[1]
+                if not value or (value not in self.kind_keys and value not in self.kind_text):
+                    return None
+                total += 60
+                continue
             if token.startswith(('标签:', 'tag:')):
                 if not token.split(':', 1)[1] or token.split(':', 1)[1] not in self.actual_tags: return None
                 total += 65
@@ -74,6 +85,8 @@ class SearchRecord:
                 total += 80
             elif token in tags:
                 total += 65
+            elif token in self.kind_text:
+                total += 55
             elif token in context:
                 total += 40
             elif token in self.phonetic_name:

@@ -24,7 +24,7 @@ class LaunchPalette(QDialog):
         title.setObjectName("ContentTitle")
         layout.addWidget(title)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("搜索工具、拼音或别名 · 标签:扫描 · 类型:文件")
+        self.search.setPlaceholderText("搜索工具、拼音或别名 · 标签:扫描 · 语言:python · 类型:文件")
         self.search.setClearButtonEnabled(True)
         self.search.setMinimumHeight(44)
         layout.addWidget(self.search)

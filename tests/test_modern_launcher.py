@@ -129,6 +129,7 @@ class BrowserTests(unittest.TestCase):
         self.window._kind_filter.setCurrentIndex(0)
         entries = [Entry(f"Tool {i}", Path(f"C:/tools/{i}"), "tools", "工具", True) for i in range(10000)]
         self.window.entries = entries
+        self.window.query = "Tool"  # a search turns the folder overview into a flat list
         self.window._rebuild_grid()
         self.assertEqual(self.window._browser.model().rowCount(), 10000)
         # Virtualization must not create a child widget for every entry.
@@ -155,6 +156,8 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual([entry.name for entry in launched], ["notes.txt"])
 
     def test_cancel_selection_restores_highlight(self):
+        self.window.query = "e"  # flat results: both workspace entries match
+        self.window._rebuild_grid()
         browser = self.window._browser
         browser.setCurrentIndex(browser.model().index(0, 0))
         previous = self.window.selected
@@ -167,6 +170,8 @@ class BrowserTests(unittest.TestCase):
     def test_compact_layout_and_quick_launch_button(self):
         self.assertFalse(hasattr(self.window, "_status_time"))
         self.assertLessEqual(GRID_SIZE.height(), 120)
+        self.window.query = "Flow"  # avoid folder-overview navigation on launch
+        self.window._rebuild_grid()
         browser = self.window._browser
         browser.doItemsLayout()
         launched = []
@@ -191,10 +196,43 @@ class BrowserTests(unittest.TestCase):
         self.window._apply_query()
         self.assertEqual(self.window._browser.model().rowCount(), 0)
         self.window._reset_filters()
-        self.assertEqual(self.window._browser.model().rowCount(), 2)
+        # 「全部」无筛选时按文件夹分组：两个条目都在 A-效率工具 下。
+        self.assertEqual(self.window._browser.model().rowCount(), 1)
+        folder = self.window._browser.entries_model.entries[0]
+        self.assertTrue(folder.group)
+        self.assertEqual(folder.name, "效率工具")
         self.assertEqual(self.window._search.text(), "")
         self.assertEqual(self.window.nav, "all")
         self.assertIsNone(self.window.tag)
+
+    def test_all_view_groups_by_folder_and_flat_when_filtered(self):
+        items = self.window._filtered()
+        self.assertEqual([entry.name for entry in items], ["效率工具"])
+        self.assertTrue(items[0].group)
+        self.window.query = "notes"
+        self.assertEqual([entry.name for entry in self.window._filtered()], ["notes.txt"])
+        self.window.query = ""
+        self.window._launch(items[0], False)
+        self.assertEqual(self.window.nav, "A-效率工具")
+
+    def test_language_filter_combo_and_sidebar_chip(self):
+        combo = self.window._lang_filter
+        combo.setCurrentIndex(combo.findData('python'))
+        self.assertEqual(self.window.lang, 'python')
+        self.assertEqual(self.window._browser.model().rowCount(), 0)
+        combo.setCurrentIndex(combo.findData('data'))
+        self.assertEqual(self.window._browser.model().rowCount(), 2)
+        self.window._sidebar._kind_buttons['data'].click()
+        self.assertEqual(self.window.lang, 'all')
+        # Clearing the language filter returns to the folder overview.
+        self.assertEqual(self.window._browser.model().rowCount(), 1)
+        self.assertTrue(self.window._browser.entries_model.entries[0].group)
+        self.window._sidebar._kind_buttons['data'].click()
+        self.assertEqual(self.window.lang, 'data')
+        self.assertTrue(self.window._sidebar._kind_buttons['data'].isChecked())
+        self.window._reset_filters()
+        self.assertEqual(self.window.lang, 'all')
+        self.assertFalse(self.window._sidebar._kind_buttons['data'].isChecked())
 
     def test_same_entry_refresh_preserves_unsaved_note(self):
         entry = next(e for e in self.window.entries if e.is_dir)
@@ -347,6 +385,7 @@ class BrowserTests(unittest.TestCase):
         apply_theme(self.app, Path(__file__).resolve().parents[1], "light")
         self.window.entries = [Entry(f"Tool {i}", Path(f"C:/tools/{i}"), "tools", "Tools", True)
                                for i in range(100)]
+        self.window.query = "Tool"
         self.window._set_view("grid")
         for width, details in ((1100, False), (1280, False), (1600, False), (1280, True)):
             self.window.resize(width, 760)

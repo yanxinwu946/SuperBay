@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -24,6 +25,14 @@ class TerminalTests(unittest.TestCase):
     def terminal(self, name):
         path = self.root / name
         path.write_bytes(b"")
+        return path
+
+    def jar(self, name, main_class, body):
+        path = self.root / name
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("META-INF/MANIFEST.MF",
+                             f"Manifest-Version: 1.0\r\nMain-Class: {main_class}\r\n\r\n")
+            archive.writestr(main_class.replace(".", "/") + ".class", body)
         return path
 
     def test_empty_terminal_opens_system_console(self):
@@ -78,6 +87,34 @@ class TerminalTests(unittest.TestCase):
         target, args = terminal_argv(str(console), "", self.root, ["cmd.exe"])
         self.assertEqual(target, str(self.root / "wezterm-gui.exe"))
         self.assertTrue(args.startswith("start "))
+
+    def test_gui_jar_uses_javaw_and_cli_jar_stays_in_terminal(self):
+        from core.terminal import gui_command, jar_is_gui
+        java = self.terminal("java.exe")
+        javaw = self.terminal("javaw.exe")
+        gui = self.jar("gui.jar", "demo.Main", b"\xca\xfe\xba\xbe javafx/application/Application")
+        cli = self.jar("cli.jar", "demo.Main", b"\xca\xfe\xba\xbe plain Main")
+        self.assertTrue(jar_is_gui(gui))
+        self.assertFalse(jar_is_gui(cli))
+
+        spec = gui_command(f'"{java}" -Xmx2g -jar "{gui}" --flag', self.root)
+        self.assertEqual(spec, (javaw, f'-Xmx2g -jar {subprocess.list2cmdline([str(gui)])} --flag'))
+        self.assertIsNone(gui_command(f'"{java}" -jar "{cli}"', self.root))
+
+    def test_gui_jar_skips_terminal_end_to_end(self):
+        java = self.terminal("java.exe")
+        javaw = self.terminal("javaw.exe")
+        gui = self.jar("gui.jar", "demo.Main", b"\xca\xfe\xba\xbe javax/swing/JFrame")
+        entry = Entry("gui", self.root, "cat", "分类", True)
+        entry.command = f'"{java}" -jar "{gui}"'
+        with patch("core.launch_history.launcher._shell_execute") as direct, \
+                patch("core.terminal.launch_terminal") as external:
+            identifier, message = start(entry, "", None, False, self.root / "launches",
+                                        terminal=str(self.terminal("wezterm.exe")))
+        self.assertIsNone(identifier)
+        self.assertIn("已启动", message)
+        external.assert_not_called()
+        self.assertEqual(direct.call_args.args[0], javaw)
 
     def test_pe_subsystem_detection(self):
         self.assertTrue(is_gui_exe(Path(os.environ["SystemRoot"]) / "explorer.exe"))
