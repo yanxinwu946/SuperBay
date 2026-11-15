@@ -1,0 +1,22 @@
+# Local settings and data
+config/config.yaml
+config/data.db
+config/desktop-layout.json
+config/backend-logs/
+
+# Local runtime and development artifacts
+*.log
+*.log.*
+*.db-wal
+*.db-shm
+.DS_Store
+Thumbs.db
+/.build/
+/release/
+/target/
+
+# Separate Sites source repository
+/website/
+
+# Local agent workspace data
+/.workbuddy/
